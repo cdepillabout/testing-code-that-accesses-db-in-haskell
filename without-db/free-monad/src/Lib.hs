@@ -100,69 +100,69 @@ data WebAction a where
     New   :: PC val =>            val -> WebAction (Key val)
     Upd   :: PC val => Key val -> val -> WebAction ()
 
--- throws an error
+-- | throws an error
 throw :: ServantErr -> WebService a
 throw = singleton . Throw
 
--- dual of `persistent`'s `get`
+-- | dual of `persistent`'s `get`
 mget :: PC val => Key val -> WebService (Maybe val)
 mget = singleton . Get
 
--- dual of `persistent`'s `getBy`
+-- | dual of `persistent`'s `getBy`
 mgetBy :: PC val => Unique val ->  WebService (Maybe (Entity val))
 mgetBy = singleton . GetBy
 
--- dual of `persistent`'s `insert`
+-- | dual of `persistent`'s `insert`
 mnew :: PC val => val ->  WebService (Key val)
 mnew = singleton . New
 
--- dual of `persistent`'s `update`
+-- | dual of `persistent`'s `update`
 mupd :: PC val => Key val -> val -> WebService ()
 mupd k v = singleton (Upd k v)
 
--- dual of `persistent`'s `delete`
+-- | dual of `persistent`'s `delete`
 mdel :: PC val => Key val -> WebService ()
 mdel = singleton . Del
 
--- like `mget` but throws a 404 if it could not find the corresponding record
+-- | like `mget` but throws a 404 if it could not find the corresponding record
 mgetOr404 :: PC val => Key val -> WebService val
 mgetOr404 = mget >=> maybe (throw err404) return
 
--- like `mgetBy` but throws a 404 if it could not find the corresponding record
+-- | like `mgetBy` but throws a 404 if it could not find the corresponding record
 mgetByOr404 :: PC val => Unique val -> WebService (Entity val)
 mgetByOr404 = mgetBy >=> maybe (throw err404) return
 
 
-runServant :: WebService a -> SqlPersistT (EitherT ServantErr IO) a
-runServant ws = case O.view ws of
+runDbDSL :: WebService a -> SqlPersistT (EitherT ServantErr IO) a
+runDbDSL ws = case O.view ws of
                   Return a -> return a
                   a :>>= f -> runM a f
   where
     runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (EitherT ServantErr IO) b
     runM (Get key) f = do
         maybeVal <- get key
-        runServant $ f maybeVal
+        runDbDSL $ f maybeVal
     runM (New val) f = do
         key <- insert val
-        runServant $ f key
+        runDbDSL $ f key
     runM (Del key) f = do
         delete key
-        runServant $ f ()
+        runDbDSL $ f ()
     runM (GetBy uniqueVal) f = do
         maybeEntityVal <- getBy uniqueVal
-        runServant $ f maybeEntityVal
+        runDbDSL $ f maybeEntityVal
     runM (Upd key val) f = do
         replace key val
-        runServant $ f ()
+        runDbDSL $ f ()
     runM (Throw servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- XXX: Don't need to rollback in the case of things going wrong?
         -- Is this handled automatically?
         -- conn <- ask
         -- liftIO $ connRollback conn (getStmtConn conn)
-        liftIO $ putStrLn $ "error occured: " ++ (show (httpStatusCode,httpStatusString))
+        liftIO $ putStrLn $ "error occured: " ++ show (httpStatusCode,httpStatusString)
         throwM servantErr
 
-runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
+runServant :: forall a . (PersistEntity a, ToBackendKey SqlBackend a)
         => SqlBackend -- ^ Connection pool
         ->
             ( (a          -> EitherT ServantErr IO (Key a))
@@ -170,21 +170,28 @@ runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
          :<|> (Key a -> a -> EitherT ServantErr IO ()     )
          :<|> (Key a      -> EitherT ServantErr IO ()     )
             )
-runCrud conn =
+runServant conn =
     runnew :<|> runget :<|> runupd :<|> rundel
   where
+    runnew :: a -> EitherT ServantErr IO (Key a)
     runnew val = runQuery conn $ mnew val
+
+    runget :: Key a -> EitherT ServantErr IO a
     runget key = runQuery conn $ mgetOr404 key
+
+    runupd :: Key a -> a -> EitherT ServantErr IO ()
     runupd key val = runQuery conn $ mupd key val
+
+    rundel :: Key a -> EitherT ServantErr IO ()
     rundel key = runQuery conn $ mdel key
 
 runQuery :: forall a . SqlBackend -> WebService a -> EitherT ServantErr IO a
-runQuery conn webservice = runSqlConn (runServant webservice) conn
+runQuery conn webservice = runSqlConn (runDbDSL webservice) conn
                                 `catch` \(err::ServantErr) -> throwError err
 
 server :: SqlBackend -> Server MyApi
-server conn = runCrud conn
-         :<|> runCrud conn
+server conn = runServant conn
+         :<|> runServant conn
 
 defaultMain :: IO ()
 defaultMain =
