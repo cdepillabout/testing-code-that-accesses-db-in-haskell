@@ -133,38 +133,34 @@ mgetByOr404 :: PC val => Unique val -> WebService (Entity val)
 mgetByOr404 = mgetBy >=> maybe (throw err404) return
 
 
-runServant :: WebService a -> SqlPersistT (LoggingT (EitherT ServantErr IO)) a
+runServant :: WebService a -> SqlPersistT (EitherT ServantErr IO) a
 runServant ws = case O.view ws of
                   Return a -> return a
                   a :>>= f -> runM a f
   where
-    runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (LoggingT (EitherT ServantErr IO)) b
-    -- runM x f = case x of
-    --     Throw rr@(ServantErr c rs _ _) -> do
-    --                 conn <- ask
-    --                 -- XXX: Don't need to rollback in the case of things going
-    --                 -- wrong?
-    --                 -- liftIO $ connRollback conn (getStmtConn conn)
-    --                 logOtherNS "WS" LevelError (show (c,rs) ^. packed)
-    --                 throwM rr
-    --     Get k    -> get k       >>= runServant . f
-    --     New v    -> insert v    >>= runServant . f
-    --     Del v    -> delete v    >>= runServant . f
-    --     GetBy u  -> getBy u     >>= runServant . f
-    --     Upd k v  -> replace k v >>= runServant . f
-    runM (Throw rr@(ServantErr c rs _ _) _ = do
-        conn <- ask
-        -- XXX: Don't need to rollback in the case of things going
-        -- wrong?
+    runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (EitherT ServantErr IO) b
+    runM (Get key) f = do
+        maybeVal <- get key
+        runServant $ f maybeVal
+    runM (New val) f = do
+        key <- insert val
+        runServant $ f key
+    runM (Del key) f = do
+        delete key
+        runServant $ f ()
+    runM (GetBy uniqueVal) f = do
+        maybeEntityVal <- getBy uniqueVal
+        runServant $ f maybeEntityVal
+    runM (Upd key val) f = do
+        replace key val
+        runServant $ f ()
+    runM (Throw servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
+        -- XXX: Don't need to rollback in the case of things going wrong?
+        -- Is this handled automatically?
+        -- conn <- ask
         -- liftIO $ connRollback conn (getStmtConn conn)
-        logOtherNS "WS" LevelError (show (c,rs) ^. packed)
-        throwM rr
-    runM (Get k)   f = get k       >>= runServant . f
-    runM (New v)   f = insert v    >>= runServant . f
-    runM (Del v)   f = delete v    >>= runServant . f
-    runM (GetBy u) f = getBy u     >>= runServant . f
-    runM (Upd k v) f = replace k v >>= runServant . f
-
+        liftIO $ putStrLn $ "error occured: " ++ (show (httpStatusCode,httpStatusString))
+        throwM servantErr
 
 runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
         => SqlBackend -- ^ Connection pool
@@ -183,11 +179,8 @@ runCrud conn =
     rundel key = runQuery conn $ mdel key
 
 runQuery :: forall a . SqlBackend -> WebService a -> EitherT ServantErr IO a
-runQuery conn ws = runStderrLoggingT db
-  where
-    db :: LoggingT (EitherT ServantErr IO) a
-    db = runSqlConn (runServant ws) conn
-            `catch` \(err::ServantErr) -> throwError err
+runQuery conn webservice = runSqlConn (runServant webservice) conn
+                                `catch` \(err::ServantErr) -> throwError err
 
 server :: SqlBackend -> Server MyApi
 server conn = runCrud conn
