@@ -20,26 +20,26 @@
 
 module Lib where
 
-import           Control.Lens
-import           Control.Monad
-import           Control.Monad.Error.Class
-import           Control.Monad.IO.Class
-import           Control.Monad.Logger
-import qualified Control.Monad.Operational  as O
-import           Control.Monad.Operational  hiding (view)
-import           Control.Monad.Reader       (ask)
-import           Control.Monad.Trans.Either
-import           Data.Aeson
-import           Data.Int
-import qualified Data.Foldable              as F
-import           Database.Persist
-import           Database.Persist.Sql
-import           Database.Persist.Sqlite
-import           Database.Persist.TH
-import           Data.Text.Lens
-import           Data.Text                  (Text)
-import qualified Network.Wai.Handler.Warp
-import           Servant
+import Control.Lens
+import Control.Monad
+import Control.Monad.Error.Class
+import Control.Monad.IO.Class
+import Control.Monad.Logger
+import qualified Control.Monad.Operational as O
+import Control.Monad.Operational hiding (view)
+import Control.Monad.Reader (ask)
+import Control.Monad.Trans.Either
+import Data.Aeson
+import Data.Int
+import qualified Data.Foldable as F
+import Database.Persist
+import Database.Persist.Sql
+import Database.Persist.Sqlite
+import Database.Persist.TH
+import Data.Text.Lens
+import Data.Text (Text)
+import Network.Wai.Handler.Warp (run)
+import Servant
 
 ----------------------------------
 -- Persistent model definitions --
@@ -140,6 +140,7 @@ runServant ws = case O.view ws of
 
 runM :: WebAction a -> (a -> WebService b) -> ServantIO b
 runM x f = case x of
+    -- TODO: This is causing something bad to happen...?
     Throw rr@(ServantErr c rs _ _) -> do
                   conn <- ask
                   liftIO $ connRollback conn (getStmtConn conn)
@@ -176,9 +177,8 @@ server pool = runCrud pool
          :<|> runCrud pool
 
 defaultMain :: IO ()
-defaultMain = do
-  pool <- runStderrLoggingT $ do
-      p <- createSqlitePool ":memory:" 1
-      runSqlPool (runMigration migrateAll) p
-      return p
-  Network.Wai.Handler.Warp.run 8080 (serve myApi (server pool))
+defaultMain =
+    runStderrLoggingT $ withSqlitePool ":memory:" 1 $ \pool -> do
+        liftIO $ runSqlPool (runMigration migrateAll) pool
+        liftIO $ putStrLn "\napi running on port 8080..."
+        liftIO $ run 8080 (serve myApi (server pool))
