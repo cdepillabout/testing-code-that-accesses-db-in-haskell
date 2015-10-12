@@ -69,17 +69,16 @@ BlogPost json
 -- servant api --
 -----------------
 
-type CRUD a = ReqBody '[JSON] a    :> Post '[JSON] (Key a) -- create
-         :<|> Capture "id" (Key a) :> Get '[JSON] a -- read
+type CRUD a =                         ReqBody '[JSON] a :> Post '[JSON] (Key a) -- create
+         :<|> Capture "id" (Key a)                      :> Get '[JSON] a -- read
          :<|> Capture "id" (Key a) :> ReqBody '[JSON] a :> Put '[JSON] () -- update
-         :<|> Capture "id" (Key a) :> Delete '[JSON] () -- delete
+         :<|> Capture "id" (Key a)                      :> Delete '[JSON] () -- delete
 
 type MyApi = "author" :> CRUD Author
         :<|> "post"   :> CRUD BlogPost
 
 myApi :: Proxy MyApi
 myApi = Proxy
-
 
 -- XXX: Hack.
 instance (ToBackendKey SqlBackend a) => FromText (Key a) where
@@ -133,14 +132,12 @@ mgetByOr404 :: PC val => Unique val -> WebService (Entity val)
 mgetByOr404 = mgetBy >=> maybe (throw err404) return
 
 
-type ServantIO a = SqlPersistT (LoggingT (EitherT ServantErr IO)) a
-
-runServant :: WebService a -> ServantIO a
+runServant :: WebService a -> SqlPersistT (LoggingT (EitherT ServantErr IO)) a
 runServant ws = case O.view ws of
                   Return a -> return a
                   a :>>= f -> runM a f
   where
-    runM :: WebAction a -> (a -> WebService b) -> ServantIO b
+    runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (LoggingT (EitherT ServantErr IO)) b
     runM x f = case x of
         -- TODO: This is causing something bad to happen...?
         Throw rr@(ServantErr c rs _ _) -> do
