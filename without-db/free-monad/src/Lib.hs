@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PolyKinds                  #-}
 {-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
@@ -23,7 +24,7 @@ module Lib where
 import Control.Exception (Exception)
 import Control.Lens
 import Control.Monad
-import Control.Monad.Catch (throwM)
+import Control.Monad.Catch (catch, throwM)
 import Control.Monad.Error.Class
 import Control.Monad.IO.Class
 import Control.Monad.Logger
@@ -139,9 +140,10 @@ runServant ws = case O.view ws of
   where
     runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (LoggingT (EitherT ServantErr IO)) b
     runM x f = case x of
-        -- TODO: This is causing something bad to happen...?
         Throw rr@(ServantErr c rs _ _) -> do
                     conn <- ask
+                    -- XXX: Don't need to rollback in the case of things going
+                    -- wrong?
                     -- liftIO $ connRollback conn (getStmtConn conn)
                     logOtherNS "WS" LevelError (show (c,rs) ^. packed)
                     throwM rr
@@ -163,13 +165,17 @@ runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
 runCrud conn =
     runnew :<|> runget :<|> runupd :<|> rundel
   where
-    runnew val = runQuery $ mnew val
-    runget key = runQuery $ mgetOr404 key
-    runupd key val = runQuery $ mupd key val
-    rundel key = runQuery $ mdel key
-    runQuery :: WebService a -> EitherT ServantErr IO a
-    runQuery ws = runStderrLoggingT $ runSqlConn (runServant ws) conn
+    runnew val = runQuery conn $ mnew val
+    runget key = runQuery conn $ mgetOr404 key
+    runupd key val = runQuery conn $ mupd key val
+    rundel key = runQuery conn $ mdel key
 
+runQuery :: forall a . SqlBackend -> WebService a -> EitherT ServantErr IO a
+runQuery conn ws = runStderrLoggingT db
+  where
+    db :: LoggingT (EitherT ServantErr IO) a
+    db = runSqlConn (runServant ws) conn
+            `catch` \(err::ServantErr) -> throwError err
 
 server :: SqlBackend -> Server MyApi
 server conn = runCrud conn
