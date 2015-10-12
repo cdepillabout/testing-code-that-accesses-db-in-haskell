@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PolyKinds                  #-}
@@ -12,6 +13,10 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
+
+-- This is an unfortunate hack.  Used to make the code slightly easier to
+-- follow.  See below for how we could fix it.
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Lib where
 
@@ -35,8 +40,6 @@ import           Data.Text.Lens
 import           Data.Text                  (Text)
 import qualified Network.Wai.Handler.Warp
 import           Servant
-
-data AccessType = NoAccess | ReadOnly | ReadWrite | Owner
 
 ----------------------------------
 -- Persistent model definitions --
@@ -62,7 +65,7 @@ BlogPost json
 -- servant api --
 -----------------
 
-type CRUD a = ReqBody '[JSON] a :> Post '[JSON] (Key a) -- create
+type CRUD a = ReqBody '[JSON] a    :> Post '[JSON] (Key a) -- create
          :<|> Capture "id" (Key a) :> Get '[JSON] a -- read
          :<|> Capture "id" (Key a) :> ReqBody '[JSON] a :> Put '[JSON] () -- update
          :<|> Capture "id" (Key a) :> Delete '[JSON] () -- delete
@@ -73,6 +76,11 @@ type MyApi = "author" :> CRUD Author
 myApi :: Proxy MyApi
 myApi = Proxy
 
+
+-- XXX: Hack.
+instance (ToBackendKey SqlBackend a) => FromText (Key a) where
+    fromText :: Text -> Maybe (Key a)
+    fromText text = toSqlKey <$> fromText text
 
 -------------------------
 -- DSL for persistent? --
@@ -144,65 +152,28 @@ runM x f = case x of
     Upd k v  -> replace k v >>= runServant . f
 
 
-runCrud :: (PersistEntity a, ToBackendKey SqlBackend a, PC b)
+runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
         => ConnectionPool -- ^ Connection pool
-        -> PermsFor a -- ^ Permission checking record
-        -> Maybe (Key Person -> Key a -> AccessType -> b) -- ^ Extra actions after creation
-        -> Maybe (Key a -> WebService ()) -- ^ Extra actions after deletion
-        -> (      Maybe Text          -> a -> EitherT ServantErr IO (Key a))
-           :<|> ((Maybe Text -> Key a      -> EitherT ServantErr IO a)
-           :<|> ((Maybe Text -> Key a -> a -> EitherT ServantErr IO ())
-           :<|> ( Maybe Text -> Key a      -> EitherT ServantErr IO ()))
-           )
-runCrud pool (PermsFor pnew pget pupd pdel) rightConstructor predelete =
-          runnew :<|> runget :<|> runupd :<|> rundel
-    where
-        auth Nothing _ = throw err401
-        auth (Just dn) perm = do
-            user <- mgetBy (UniqueName dn) >>= maybe (throw err403) return
-            check <- checkPerms user perm
-            unless check (throw err403)
-            return user
-        runget dn mk = runQuery $ do
-            let k = mk ^. _MKey
-            void $ auth dn (pget k)
-            mgetOr404 k
-        runnew dn val = runQuery $ do
-            usr <- auth dn pnew
-            k <- mnew val
-            F.mapM_ (\c -> mnew (c (entityKey usr) k Owner)) rightConstructor
-            return (k ^. from _MKey)
-        runupd dn mk val = runQuery $ do
-            let k = mk ^. _MKey
-            void $ auth dn (pupd k)
-            mupd k val
-        rundel dn mk = runQuery $ do
-            let k = mk ^. _MKey
-            void $ auth dn (pdel k)
-            F.mapM_ ($ k) predelete
-            mdel k
-        runQuery :: WebService a -> EitherT ServantErr IO a
-        runQuery ws = runStderrLoggingT $ runSqlPool (runServant ws) pool
+        ->
+            ( (a          -> EitherT ServantErr IO (Key a))
+         :<|> (Key a      -> EitherT ServantErr IO a      )
+         :<|> (Key a -> a -> EitherT ServantErr IO ()     )
+         :<|> (Key a      -> EitherT ServantErr IO ()     )
+            )
+runCrud pool =
+    runnew :<|> runget :<|> runupd :<|> rundel
+  where
+    runnew val = runQuery $ mnew val
+    runget key = runQuery $ mgetOr404 key
+    runupd key val = runQuery $ mupd key val
+    rundel key = runQuery $ mdel key
+    runQuery :: WebService a -> EitherT ServantErr IO a
+    runQuery ws = runStderrLoggingT $ runSqlPool (runServant ws) pool
 
-
--- A default action for when you need not run additional actions after creation
-noCreateRightAdjustment :: Maybe (Key Person -> Key a -> AccessType -> PostRights)
-noCreateRightAdjustment = Nothing
 
 server :: ConnectionPool -> Server MyApi
-server pool =
-      runCrud pool adminOnly noCreateRightAdjustment Nothing
- :<|> defaultCrud blogPostRight PostRights Nothing
-   where
-     editRights c cid = rw (c cid) .|| isAdmin
-     delRights c cid = owner (c cid) .|| isAdmin
-     defaultPermissions c =
-          PermsFor always
-                  (const always)
-                  (editRights c)
-                  (delRights c)
-     defaultCrud c r d = runCrud pool (defaultPermissions c)
-                                 (Just r) d
+server pool = runCrud pool
+         :<|> runCrud pool
 
 defaultMain :: IO ()
 defaultMain = do
