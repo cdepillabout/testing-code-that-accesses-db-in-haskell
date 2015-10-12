@@ -131,26 +131,24 @@ mgetByOr404 = mgetBy >=> maybe (throw err404) return
 
 type ServantIO a = SqlPersistT (LoggingT (EitherT ServantErr IO)) a
 
-
-
 runServant :: WebService a -> ServantIO a
 runServant ws = case O.view ws of
                   Return a -> return a
                   a :>>= f -> runM a f
-
-runM :: WebAction a -> (a -> WebService b) -> ServantIO b
-runM x f = case x of
-    -- TODO: This is causing something bad to happen...?
-    Throw rr@(ServantErr c rs _ _) -> do
-                  conn <- ask
-                  liftIO $ connRollback conn (getStmtConn conn)
-                  logOtherNS "WS" LevelError (show (c,rs) ^. packed)
-                  throwError rr
-    Get k    -> get k       >>= runServant . f
-    New v    -> insert v    >>= runServant . f
-    Del v    -> delete v    >>= runServant . f
-    GetBy u  -> getBy u     >>= runServant . f
-    Upd k v  -> replace k v >>= runServant . f
+  where
+    runM :: WebAction a -> (a -> WebService b) -> ServantIO b
+    runM x f = case x of
+        -- TODO: This is causing something bad to happen...?
+        Throw rr@(ServantErr c rs _ _) -> do
+                    conn <- ask
+                    liftIO $ connRollback conn (getStmtConn conn)
+                    logOtherNS "WS" LevelError (show (c,rs) ^. packed)
+                    throwError rr
+        Get k    -> get k       >>= runServant . f
+        New v    -> insert v    >>= runServant . f
+        Del v    -> delete v    >>= runServant . f
+        GetBy u  -> getBy u     >>= runServant . f
+        Upd k v  -> replace k v >>= runServant . f
 
 
 runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
