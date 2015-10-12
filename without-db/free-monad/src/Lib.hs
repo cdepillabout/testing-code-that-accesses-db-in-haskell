@@ -20,8 +20,10 @@
 
 module Lib where
 
+import Control.Exception (Exception)
 import Control.Lens
 import Control.Monad
+import Control.Monad.Catch (throwM)
 import Control.Monad.Error.Class
 import Control.Monad.IO.Class
 import Control.Monad.Logger
@@ -40,6 +42,8 @@ import Data.Text.Lens
 import Data.Text (Text)
 import Network.Wai.Handler.Warp (run)
 import Servant
+
+instance Exception ServantErr
 
 ----------------------------------
 -- Persistent model definitions --
@@ -141,9 +145,9 @@ runServant ws = case O.view ws of
         -- TODO: This is causing something bad to happen...?
         Throw rr@(ServantErr c rs _ _) -> do
                     conn <- ask
-                    liftIO $ connRollback conn (getStmtConn conn)
+                    -- liftIO $ connRollback conn (getStmtConn conn)
                     logOtherNS "WS" LevelError (show (c,rs) ^. packed)
-                    throwError rr
+                    throwM rr
         Get k    -> get k       >>= runServant . f
         New v    -> insert v    >>= runServant . f
         Del v    -> delete v    >>= runServant . f
@@ -152,14 +156,14 @@ runServant ws = case O.view ws of
 
 
 runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
-        => ConnectionPool -- ^ Connection pool
+        => SqlBackend -- ^ Connection pool
         ->
             ( (a          -> EitherT ServantErr IO (Key a))
          :<|> (Key a      -> EitherT ServantErr IO a      )
          :<|> (Key a -> a -> EitherT ServantErr IO ()     )
          :<|> (Key a      -> EitherT ServantErr IO ()     )
             )
-runCrud pool =
+runCrud conn =
     runnew :<|> runget :<|> runupd :<|> rundel
   where
     runnew val = runQuery $ mnew val
@@ -167,16 +171,16 @@ runCrud pool =
     runupd key val = runQuery $ mupd key val
     rundel key = runQuery $ mdel key
     runQuery :: WebService a -> EitherT ServantErr IO a
-    runQuery ws = runStderrLoggingT $ runSqlPool (runServant ws) pool
+    runQuery ws = runStderrLoggingT $ runSqlConn (runServant ws) conn
 
 
-server :: ConnectionPool -> Server MyApi
-server pool = runCrud pool
-         :<|> runCrud pool
+server :: SqlBackend -> Server MyApi
+server conn = runCrud conn
+         :<|> runCrud conn
 
 defaultMain :: IO ()
 defaultMain =
-    runStderrLoggingT $ withSqlitePool ":memory:" 1 $ \pool -> do
-        liftIO $ runSqlPool (runMigration migrateAll) pool
+    runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
+        liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 (serve myApi (server pool))
+        liftIO $ run 8080 (serve myApi (server conn))
