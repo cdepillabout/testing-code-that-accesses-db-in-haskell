@@ -139,19 +139,31 @@ runServant ws = case O.view ws of
                   a :>>= f -> runM a f
   where
     runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (LoggingT (EitherT ServantErr IO)) b
-    runM x f = case x of
-        Throw rr@(ServantErr c rs _ _) -> do
-                    conn <- ask
-                    -- XXX: Don't need to rollback in the case of things going
-                    -- wrong?
-                    -- liftIO $ connRollback conn (getStmtConn conn)
-                    logOtherNS "WS" LevelError (show (c,rs) ^. packed)
-                    throwM rr
-        Get k    -> get k       >>= runServant . f
-        New v    -> insert v    >>= runServant . f
-        Del v    -> delete v    >>= runServant . f
-        GetBy u  -> getBy u     >>= runServant . f
-        Upd k v  -> replace k v >>= runServant . f
+    -- runM x f = case x of
+    --     Throw rr@(ServantErr c rs _ _) -> do
+    --                 conn <- ask
+    --                 -- XXX: Don't need to rollback in the case of things going
+    --                 -- wrong?
+    --                 -- liftIO $ connRollback conn (getStmtConn conn)
+    --                 logOtherNS "WS" LevelError (show (c,rs) ^. packed)
+    --                 throwM rr
+    --     Get k    -> get k       >>= runServant . f
+    --     New v    -> insert v    >>= runServant . f
+    --     Del v    -> delete v    >>= runServant . f
+    --     GetBy u  -> getBy u     >>= runServant . f
+    --     Upd k v  -> replace k v >>= runServant . f
+    runM (Throw rr@(ServantErr c rs _ _) _ = do
+        conn <- ask
+        -- XXX: Don't need to rollback in the case of things going
+        -- wrong?
+        -- liftIO $ connRollback conn (getStmtConn conn)
+        logOtherNS "WS" LevelError (show (c,rs) ^. packed)
+        throwM rr
+    runM (Get k)   f = get k       >>= runServant . f
+    runM (New v)   f = insert v    >>= runServant . f
+    runM (Del v)   f = delete v    >>= runServant . f
+    runM (GetBy u) f = getBy u     >>= runServant . f
+    runM (Upd k v) f = replace k v >>= runServant . f
 
 
 runCrud :: (PersistEntity a, ToBackendKey SqlBackend a)
