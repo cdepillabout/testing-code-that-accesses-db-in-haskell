@@ -81,36 +81,36 @@ instance (ToBackendKey SqlBackend a) => FromText (Key a) where
 type DbDSL = Program DbAction
 type PC val = (PersistEntityBackend val ~ SqlBackend, PersistEntity val)
 data DbAction a where
-    Throw :: ServantErr               -> DbAction a
-    Get   :: PC val => Key val        -> DbAction (Maybe val)
-    Del   :: PC val => Key val        -> DbAction ()
-    GetBy :: PC val => Unique val     -> DbAction (Maybe (Entity val))
-    New   :: PC val =>            val -> DbAction (Key val)
-    Upd   :: PC val => Key val -> val -> DbAction ()
+    ThrowDb  :: ServantErr               -> DbAction a
+    GetDb    :: PC val => Key val        -> DbAction (Maybe val)
+    GetByDb  :: PC val => Unique val     -> DbAction (Maybe (Entity val))
+    NewDb    :: PC val =>            val -> DbAction (Key val)
+    DelDb    :: PC val => Key val        -> DbAction ()
+    UpdateDb :: PC val => Key val -> val -> DbAction ()
 
 -- | throws an error
 throw :: ServantErr -> DbDSL a
-throw = singleton . Throw
+throw = singleton . ThrowDb
 
 -- | dual of `persistent`'s `get`
 mget :: PC val => Key val -> DbDSL (Maybe val)
-mget = singleton . Get
+mget = singleton . GetDb
 
 -- | dual of `persistent`'s `getBy`
 mgetBy :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
-mgetBy = singleton . GetBy
+mgetBy = singleton . GetByDb
 
 -- | dual of `persistent`'s `insert`
 mnew :: PC val => val ->  DbDSL (Key val)
-mnew = singleton . New
+mnew = singleton . NewDb
 
 -- | dual of `persistent`'s `update`
 mupd :: PC val => Key val -> val -> DbDSL ()
-mupd k v = singleton (Upd k v)
+mupd k v = singleton (UpdateDb k v)
 
 -- | dual of `persistent`'s `delete`
 mdel :: PC val => Key val -> DbDSL ()
-mdel = singleton . Del
+mdel = singleton . DelDb
 
 -- | like `mget` but throws a 404 if it could not find the corresponding record
 mgetOr404 :: PC val => Key val -> DbDSL val
@@ -130,22 +130,22 @@ runDbDSL ws =
     runM :: DbAction a
          -> (a -> DbDSL b)
          -> SqlPersistT (EitherT ServantErr IO) b
-    runM (Get key) f = do
+    runM (GetDb key) f = do
         maybeVal <- get key
         runDbDSL $ f maybeVal
-    runM (New val) f = do
+    runM (NewDb val) f = do
         key <- insert val
         runDbDSL $ f key
-    runM (Del key) f = do
+    runM (DelDb key) f = do
         delete key
         runDbDSL $ f ()
-    runM (GetBy uniqueVal) f = do
+    runM (GetByDb uniqueVal) f = do
         maybeEntityVal <- getBy uniqueVal
         runDbDSL $ f maybeEntityVal
-    runM (Upd key val) f = do
+    runM (UpdateDb key val) f = do
         replace key val
         runDbDSL $ f ()
-    runM (Throw servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
+    runM (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- In actual usage, you may need to rollback the database
         -- connection here.  It doesn't matter for this simple
         -- demonstration, but in production you'll probably want to roll
