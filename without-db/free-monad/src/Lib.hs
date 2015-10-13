@@ -19,30 +19,34 @@
 -- follow.  See below for how we could fix it.
 {-# LANGUAGE UndecidableInstances       #-}
 
+-- This is another unfortunate hack to make the code simpler and easier to
+-- understand.  Described at the end of this file.
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Lib where
 
 import Control.Exception (Exception)
-import Control.Lens
-import Control.Monad
 import Control.Monad.Catch (catch, throwM)
-import Control.Monad.Error.Class
-import Control.Monad.IO.Class
-import Control.Monad.Logger
+import Control.Monad.Error.Class (throwError)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Logger (runStderrLoggingT)
 import qualified Control.Monad.Operational as O
 import Control.Monad.Operational hiding (view)
-import Control.Monad.Reader (ask)
-import Control.Monad.Trans.Either
-import Data.Aeson
-import Data.Int
-import qualified Data.Foldable as F
+import Control.Monad.Trans.Either (EitherT)
+import Data.Proxy (Proxy(..))
 import Database.Persist
-import Database.Persist.Sql
+    ( Entity, Key, PersistEntity, PersistEntityBackend, ToBackendKey, Unique
+    , delete, get, getBy, insert, replace )
 import Database.Persist.Sqlite
+    ( SqlBackend, SqlPersistT, runMigration, runSqlConn, toSqlKey
+    , withSqliteConn )
 import Database.Persist.TH
-import Data.Text.Lens
+    ( mkMigrate, mkPersist, persistLowerCase, share, sqlSettings )
 import Data.Text (Text)
 import Network.Wai.Handler.Warp (run)
 import Servant
+    ( (:<|>)(..), (:>), Capture, Delete, FromText(..), Get, JSON, Post, Put
+    , ReqBody, ServantErr(..), Server, err404, serve )
 
 -- Inspired by
 -- https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls.
@@ -53,8 +57,7 @@ instance Exception ServantErr
 -- Persistent model definitions --
 ----------------------------------
 
-share [ mkPersist sqlSettings { mpsGenerateLenses = True }
-      , mkMigrate "migrateAll"]
+share [ mkPersist sqlSettings, mkMigrate "migrateAll"]
       [persistLowerCase|
 Author json
     name Text
@@ -90,61 +93,66 @@ data DbAction a where
 
 -- | throws an error
 throwDb :: ServantErr -> DbDSL a
-throwDb = singleton . ThrowDb
+throwDb err = singleton (ThrowDb err)
 
 -- | dual of `persistent`'s `get`
 getDb :: PC val => Key val -> DbDSL (Maybe val)
-getDb = singleton . GetDb
+getDb key = singleton (GetDb key)
 
 -- | dual of `persistent`'s `getBy`
 getByDb :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
-getByDb = singleton . GetByDb
+getByDb uniqueVal = singleton (GetByDb uniqueVal)
 
 -- | dual of `persistent`'s `insert`
 insertDb :: PC val => val ->  DbDSL (Key val)
-insertDb = singleton . InsertDb
+insertDb val = singleton (InsertDb val)
 
 -- | dual of `persistent`'s `update`
 updateDb :: PC val => Key val -> val -> DbDSL ()
-updateDb k v = singleton (UpdateDb k v)
+updateDb key val = singleton (UpdateDb key val)
 
 -- | dual of `persistent`'s `delete`
 deleteDb :: PC val => Key val -> DbDSL ()
-deleteDb = singleton . DelDb
+deleteDb key = singleton (DelDb key)
 
 -- | like `getDb` but throws a 404 if it could not find the corresponding record
 getOr404Db :: PC val => Key val -> DbDSL val
-getOr404Db = getDb >=> maybe (throwDb err404) return
+getOr404Db key = do
+    maybeVal <- getDb key
+    case maybeVal of
+        Just val -> return val
+        Nothing -> throwDb err404
 
 -- | like `getByDb` but throws a 404 if it could not find the corresponding record
 getByOr404Db :: PC val => Unique val -> DbDSL (Entity val)
-getByOr404Db = getByDb >=> maybe (throwDb err404) return
-
+getByOr404Db uniqueVal = do
+    maybeEntity <- getByDb uniqueVal
+    case maybeEntity of
+        Just entity -> return entity
+        Nothing -> throwDb err404
 
 runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
 runDbDSLInPersistent ws =
     case O.view ws of
         Return a -> return a
-        a :>>= f -> runM a f
+        a :>>= nextStep -> runM a nextStep
   where
-    runM :: DbAction a
-         -> (a -> DbDSL b)
-         -> SqlPersistT (EitherT ServantErr IO) b
-    runM (GetDb key) f = do
+    runM :: DbAction a -> (a -> DbDSL b) -> SqlPersistT (EitherT ServantErr IO) b
+    runM (GetDb key) nextStep = do
         maybeVal <- get key
-        runDbDSLInPersistent $ f maybeVal
-    runM (InsertDb val) f = do
+        runDbDSLInPersistent $ nextStep maybeVal
+    runM (InsertDb val) nextStep = do
         key <- insert val
-        runDbDSLInPersistent $ f key
-    runM (DelDb key) f = do
+        runDbDSLInPersistent $ nextStep key
+    runM (DelDb key) nextStep = do
         delete key
-        runDbDSLInPersistent $ f ()
-    runM (GetByDb uniqueVal) f = do
+        runDbDSLInPersistent $ nextStep ()
+    runM (GetByDb uniqueVal) nextStep = do
         maybeEntityVal <- getBy uniqueVal
-        runDbDSLInPersistent $ f maybeEntityVal
-    runM (UpdateDb key val) f = do
+        runDbDSLInPersistent $ nextStep maybeEntityVal
+    runM (UpdateDb key val) nextStep = do
         replace key val
-        runDbDSLInPersistent $ f ()
+        runDbDSLInPersistent $ nextStep ()
     runM (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- In actual usage, you may need to rollback the database
         -- connection here.  It doesn't matter for this simple

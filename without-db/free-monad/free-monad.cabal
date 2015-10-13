@@ -34,11 +34,12 @@ library
                      , transformers
                      , warp
   default-language:    Haskell2010
+  ghc-options:         -Wall
 
 executable free-monad-exe
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , free-monad
   default-language:    Haskell2010
@@ -49,7 +50,7 @@ test-suite free-monad-test
   main-is:             Test.hs
   build-depends:       base
                      , free-monad
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
 source-repository head
