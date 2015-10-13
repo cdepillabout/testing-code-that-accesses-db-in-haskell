@@ -30,8 +30,7 @@ import Control.Monad.Catch (catch, throwM)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStderrLoggingT)
-import qualified Control.Monad.Operational as O
-import Control.Monad.Operational hiding (view)
+import Control.Monad.Operational ()
 import Control.Monad.Trans.Either (EitherT)
 import Data.Proxy (Proxy(..))
 import Database.Persist
@@ -133,7 +132,7 @@ getByOr404Db uniqueVal = do
 
 runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
 runDbDSLInPersistent ws =
-    case O.view ws of
+    case view ws of
         Return a -> return a
         a :>>= nextStep -> runM a nextStep
   where
