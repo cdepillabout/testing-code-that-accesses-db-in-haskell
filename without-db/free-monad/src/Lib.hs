@@ -84,45 +84,45 @@ data DbAction a where
     ThrowDb  :: ServantErr               -> DbAction a
     GetDb    :: PC val => Key val        -> DbAction (Maybe val)
     GetByDb  :: PC val => Unique val     -> DbAction (Maybe (Entity val))
-    NewDb    :: PC val =>            val -> DbAction (Key val)
-    DelDb    :: PC val => Key val        -> DbAction ()
+    InsertDb :: PC val =>            val -> DbAction (Key val)
     UpdateDb :: PC val => Key val -> val -> DbAction ()
+    DelDb    :: PC val => Key val        -> DbAction ()
 
 -- | throws an error
-throw :: ServantErr -> DbDSL a
-throw = singleton . ThrowDb
+throwDb :: ServantErr -> DbDSL a
+throwDb = singleton . ThrowDb
 
 -- | dual of `persistent`'s `get`
-mget :: PC val => Key val -> DbDSL (Maybe val)
-mget = singleton . GetDb
+getDb :: PC val => Key val -> DbDSL (Maybe val)
+getDb = singleton . GetDb
 
 -- | dual of `persistent`'s `getBy`
-mgetBy :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
-mgetBy = singleton . GetByDb
+getByDb :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
+getByDb = singleton . GetByDb
 
 -- | dual of `persistent`'s `insert`
-mnew :: PC val => val ->  DbDSL (Key val)
-mnew = singleton . NewDb
+insertDb :: PC val => val ->  DbDSL (Key val)
+insertDb = singleton . InsertDb
 
 -- | dual of `persistent`'s `update`
-mupd :: PC val => Key val -> val -> DbDSL ()
-mupd k v = singleton (UpdateDb k v)
+updateDb :: PC val => Key val -> val -> DbDSL ()
+updateDb k v = singleton (UpdateDb k v)
 
 -- | dual of `persistent`'s `delete`
-mdel :: PC val => Key val -> DbDSL ()
-mdel = singleton . DelDb
+deleteDb :: PC val => Key val -> DbDSL ()
+deleteDb = singleton . DelDb
 
--- | like `mget` but throws a 404 if it could not find the corresponding record
-mgetOr404 :: PC val => Key val -> DbDSL val
-mgetOr404 = mget >=> maybe (throw err404) return
+-- | like `getDb` but throws a 404 if it could not find the corresponding record
+getOr404Db :: PC val => Key val -> DbDSL val
+getOr404Db = getDb >=> maybe (throwDb err404) return
 
--- | like `mgetBy` but throws a 404 if it could not find the corresponding record
-mgetByOr404 :: PC val => Unique val -> DbDSL (Entity val)
-mgetByOr404 = mgetBy >=> maybe (throw err404) return
+-- | like `getByDb` but throws a 404 if it could not find the corresponding record
+getByOr404Db :: PC val => Unique val -> DbDSL (Entity val)
+getByOr404Db = getByDb >=> maybe (throwDb err404) return
 
 
-runDbDSL :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
-runDbDSL ws =
+runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
+runDbDSLInPersistent ws =
     case O.view ws of
         Return a -> return a
         a :>>= f -> runM a f
@@ -132,19 +132,19 @@ runDbDSL ws =
          -> SqlPersistT (EitherT ServantErr IO) b
     runM (GetDb key) f = do
         maybeVal <- get key
-        runDbDSL $ f maybeVal
-    runM (NewDb val) f = do
+        runDbDSLInPersistent $ f maybeVal
+    runM (InsertDb val) f = do
         key <- insert val
-        runDbDSL $ f key
+        runDbDSLInPersistent $ f key
     runM (DelDb key) f = do
         delete key
-        runDbDSL $ f ()
+        runDbDSLInPersistent $ f ()
     runM (GetByDb uniqueVal) f = do
         maybeEntityVal <- getBy uniqueVal
-        runDbDSL $ f maybeEntityVal
+        runDbDSLInPersistent $ f maybeEntityVal
     runM (UpdateDb key val) f = do
         replace key val
-        runDbDSL $ f ()
+        runDbDSLInPersistent $ f ()
     runM (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- In actual usage, you may need to rollback the database
         -- connection here.  It doesn't matter for this simple
@@ -170,29 +170,29 @@ runCreateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> a
        -> EitherT ServantErr IO (Key a)
-runCreateRest conn val = runDbDSLInServant conn $ mnew val
+runCreateRest conn val = runDbDSLInServant conn $ insertDb val
 
 runReadRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> EitherT ServantErr IO a
-runReadRest conn key = runDbDSLInServant conn $ mgetOr404 key
+runReadRest conn key = runDbDSLInServant conn $ getOr404Db key
 
 runUpdateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> a
        -> EitherT ServantErr IO ()
-runUpdateRest conn key val = runDbDSLInServant conn $ mupd key val
+runUpdateRest conn key val = runDbDSLInServant conn $ updateDb key val
 
 runDeleteRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> EitherT ServantErr IO ()
-runDeleteRest conn key = runDbDSLInServant conn $ mdel key
+runDeleteRest conn key = runDbDSLInServant conn $ deleteDb key
 
 runDbDSLInServant :: forall a . SqlBackend -> DbDSL a -> EitherT ServantErr IO a
-runDbDSLInServant conn dbDSL = runSqlConn (runDbDSL dbDSL) conn
+runDbDSLInServant conn dbDSL = runSqlConn (runDbDSLInPersistent dbDSL) conn
                                 `catch` \(err::ServantErr) -> throwError err
 
 server :: SqlBackend
