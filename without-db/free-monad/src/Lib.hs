@@ -170,29 +170,29 @@ runCreateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> a
        -> EitherT ServantErr IO (Key a)
-runCreateRest conn val = runQuery conn $ mnew val
+runCreateRest conn val = runDbDSLInServant conn $ mnew val
 
 runReadRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> EitherT ServantErr IO a
-runReadRest conn key = runQuery conn $ mgetOr404 key
+runReadRest conn key = runDbDSLInServant conn $ mgetOr404 key
 
 runUpdateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> a
        -> EitherT ServantErr IO ()
-runUpdateRest conn key val = runQuery conn $ mupd key val
+runUpdateRest conn key val = runDbDSLInServant conn $ mupd key val
 
 runDeleteRest :: (PersistEntity a, ToBackendKey SqlBackend a)
        => SqlBackend
        -> Key a
        -> EitherT ServantErr IO ()
-runDeleteRest conn key = runQuery conn $ mdel key
+runDeleteRest conn key = runDbDSLInServant conn $ mdel key
 
-runQuery :: forall a . SqlBackend -> DbDSL a -> EitherT ServantErr IO a
-runQuery conn dbDSL = runSqlConn (runDbDSL dbDSL) conn
+runDbDSLInServant :: forall a . SqlBackend -> DbDSL a -> EitherT ServantErr IO a
+runDbDSLInServant conn dbDSL = runSqlConn (runDbDSL dbDSL) conn
                                 `catch` \(err::ServantErr) -> throwError err
 
 server :: SqlBackend
