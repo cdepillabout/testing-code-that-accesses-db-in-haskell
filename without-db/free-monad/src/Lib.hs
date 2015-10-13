@@ -30,7 +30,7 @@ import Control.Monad.Catch (catch, throwM)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStderrLoggingT)
-import Control.Monad.Operational ()
+import Control.Monad.Operational (Program, ProgramViewT(..), singleton, view)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Proxy (Proxy(..))
 import Database.Persist
