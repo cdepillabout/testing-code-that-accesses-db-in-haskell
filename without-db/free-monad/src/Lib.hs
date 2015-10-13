@@ -44,6 +44,9 @@ import Data.Text (Text)
 import Network.Wai.Handler.Warp (run)
 import Servant
 
+-- Inspired by
+-- https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls.
+
 instance Exception ServantErr
 
 ----------------------------------
