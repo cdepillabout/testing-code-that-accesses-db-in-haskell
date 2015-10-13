@@ -50,8 +50,6 @@ import Servant
 -- Inspired by
 -- https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls.
 
-instance Exception ServantErr
-
 ----------------------------------
 -- Persistent model definitions --
 ----------------------------------
@@ -70,11 +68,6 @@ BlogPost json
     deriving Show
 |]
 
-
--- XXX: Hack.
-instance (ToBackendKey SqlBackend a) => FromText (Key a) where
-    fromText :: Text -> Maybe (Key a)
-    fromText text = toSqlKey <$> fromText text
 
 -------------------------
 -- DSL for persistent? --
@@ -131,28 +124,28 @@ getByOr404Db uniqueVal = do
         Nothing -> throwDb err404
 
 runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
-runDbDSLInPersistent ws =
-    case view ws of
+runDbDSLInPersistent dbDSL =
+    case view dbDSL of
         Return a -> return a
-        a :>>= nextStep -> runM a nextStep
+        a :>>= nextStep -> go a nextStep
   where
-    runM :: DbAction a -> (a -> DbDSL b) -> SqlPersistT (EitherT ServantErr IO) b
-    runM (GetDb key) nextStep = do
+    go :: DbAction a -> (a -> DbDSL b) -> SqlPersistT (EitherT ServantErr IO) b
+    go (GetDb key) nextStep = do
         maybeVal <- get key
         runDbDSLInPersistent $ nextStep maybeVal
-    runM (InsertDb val) nextStep = do
+    go (InsertDb val) nextStep = do
         key <- insert val
         runDbDSLInPersistent $ nextStep key
-    runM (DelDb key) nextStep = do
+    go (DelDb key) nextStep = do
         delete key
         runDbDSLInPersistent $ nextStep ()
-    runM (GetByDb uniqueVal) nextStep = do
+    go (GetByDb uniqueVal) nextStep = do
         maybeEntityVal <- getBy uniqueVal
         runDbDSLInPersistent $ nextStep maybeEntityVal
-    runM (UpdateDb key val) nextStep = do
+    go (UpdateDb key val) nextStep = do
         replace key val
         runDbDSLInPersistent $ nextStep ()
-    runM (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
+    go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- In actual usage, you may need to rollback the database
         -- connection here.  It doesn't matter for this simple
         -- demonstration, but in production you'll probably want to roll
@@ -229,3 +222,13 @@ defaultMain =
   where
     myApiType :: Proxy ( "author" :> CRUD Author :<|> "post" :> CRUD BlogPost )
     myApiType = Proxy
+
+
+--- XXX: Hack.
+instance Exception ServantErr
+
+-- XXX: Hack.
+instance (ToBackendKey SqlBackend a) => FromText (Key a) where
+    fromText :: Text -> Maybe (Key a)
+    fromText text = toSqlKey <$> fromText text
+
