@@ -69,21 +69,6 @@ BlogPost json
 |]
 
 
------------------
--- servant api --
------------------
-
-type CRUD a =                         ReqBody '[JSON] a :> Post '[JSON] (Key a) -- create
-         :<|> Capture "id" (Key a)                      :> Get '[JSON] a -- read
-         :<|> Capture "id" (Key a) :> ReqBody '[JSON] a :> Put '[JSON] () -- update
-         :<|> Capture "id" (Key a)                      :> Delete '[JSON] () -- delete
-
-type MyApi = "author" :> CRUD Author
-        :<|> "post"   :> CRUD BlogPost
-
-myApi :: Proxy MyApi
-myApi = Proxy
-
 -- XXX: Hack.
 instance (ToBackendKey SqlBackend a) => FromText (Key a) where
     fromText :: Text -> Maybe (Key a)
@@ -93,55 +78,58 @@ instance (ToBackendKey SqlBackend a) => FromText (Key a) where
 -- DSL for persistent? --
 -------------------------
 
-type WebService = Program WebAction
+type DbDSL = Program DbAction
 type PC val = (PersistEntityBackend val ~ SqlBackend, PersistEntity val)
-data WebAction a where
-    Throw :: ServantErr               -> WebAction a
-    Get   :: PC val => Key val        -> WebAction (Maybe val)
-    Del   :: PC val => Key val        -> WebAction ()
-    GetBy :: PC val => Unique val     -> WebAction (Maybe (Entity val))
-    New   :: PC val =>            val -> WebAction (Key val)
-    Upd   :: PC val => Key val -> val -> WebAction ()
+data DbAction a where
+    Throw :: ServantErr               -> DbAction a
+    Get   :: PC val => Key val        -> DbAction (Maybe val)
+    Del   :: PC val => Key val        -> DbAction ()
+    GetBy :: PC val => Unique val     -> DbAction (Maybe (Entity val))
+    New   :: PC val =>            val -> DbAction (Key val)
+    Upd   :: PC val => Key val -> val -> DbAction ()
 
 -- | throws an error
-throw :: ServantErr -> WebService a
+throw :: ServantErr -> DbDSL a
 throw = singleton . Throw
 
 -- | dual of `persistent`'s `get`
-mget :: PC val => Key val -> WebService (Maybe val)
+mget :: PC val => Key val -> DbDSL (Maybe val)
 mget = singleton . Get
 
 -- | dual of `persistent`'s `getBy`
-mgetBy :: PC val => Unique val ->  WebService (Maybe (Entity val))
+mgetBy :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
 mgetBy = singleton . GetBy
 
 -- | dual of `persistent`'s `insert`
-mnew :: PC val => val ->  WebService (Key val)
+mnew :: PC val => val ->  DbDSL (Key val)
 mnew = singleton . New
 
 -- | dual of `persistent`'s `update`
-mupd :: PC val => Key val -> val -> WebService ()
+mupd :: PC val => Key val -> val -> DbDSL ()
 mupd k v = singleton (Upd k v)
 
 -- | dual of `persistent`'s `delete`
-mdel :: PC val => Key val -> WebService ()
+mdel :: PC val => Key val -> DbDSL ()
 mdel = singleton . Del
 
 -- | like `mget` but throws a 404 if it could not find the corresponding record
-mgetOr404 :: PC val => Key val -> WebService val
+mgetOr404 :: PC val => Key val -> DbDSL val
 mgetOr404 = mget >=> maybe (throw err404) return
 
 -- | like `mgetBy` but throws a 404 if it could not find the corresponding record
-mgetByOr404 :: PC val => Unique val -> WebService (Entity val)
+mgetByOr404 :: PC val => Unique val -> DbDSL (Entity val)
 mgetByOr404 = mgetBy >=> maybe (throw err404) return
 
 
-runDbDSL :: WebService a -> SqlPersistT (EitherT ServantErr IO) a
-runDbDSL ws = case O.view ws of
-                  Return a -> return a
-                  a :>>= f -> runM a f
+runDbDSL :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
+runDbDSL ws =
+    case O.view ws of
+        Return a -> return a
+        a :>>= f -> runM a f
   where
-    runM :: WebAction a -> (a -> WebService b) -> SqlPersistT (EitherT ServantErr IO) b
+    runM :: DbAction a
+         -> (a -> DbDSL b)
+         -> SqlPersistT (EitherT ServantErr IO) b
     runM (Get key) f = do
         maybeVal <- get key
         runDbDSL $ f maybeVal
@@ -158,47 +146,79 @@ runDbDSL ws = case O.view ws of
         replace key val
         runDbDSL $ f ()
     runM (Throw servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
-        -- XXX: Don't need to rollback in the case of things going wrong?
-        -- Is this handled automatically?
+        -- In actual usage, you may need to rollback the database
+        -- connection here.  It doesn't matter for this simple
+        -- demonstration, but in production you'll probably want to roll
+        -- back the current transaction when you use 'Throw'.
         -- conn <- ask
         -- liftIO $ connRollback conn (getStmtConn conn)
         liftIO $ putStrLn $ "error occured: " ++ show (httpStatusCode,httpStatusString)
         throwM servantErr
 
-runServant :: forall a . (PersistEntity a, ToBackendKey SqlBackend a)
-        => SqlBackend -- ^ Connection pool
-        ->
-            ( (a          -> EitherT ServantErr IO (Key a))
-         :<|> (Key a      -> EitherT ServantErr IO a      )
-         :<|> (Key a -> a -> EitherT ServantErr IO ()     )
-         :<|> (Key a      -> EitherT ServantErr IO ()     )
-            )
-runServant conn =
-    runnew :<|> runget :<|> runupd :<|> rundel
-  where
-    runnew :: a -> EitherT ServantErr IO (Key a)
-    runnew val = runQuery conn $ mnew val
+-----------------
+-- servant api --
+-----------------
 
-    runget :: Key a -> EitherT ServantErr IO a
-    runget key = runQuery conn $ mgetOr404 key
+type CRUD a =                         ReqBody '[JSON] a :> Post '[JSON] (Key a) -- create
+         :<|> Capture "id" (Key a)                      :> Get '[JSON] a -- read
+         :<|> Capture "id" (Key a) :> ReqBody '[JSON] a :> Put '[JSON] () -- update
+         :<|> Capture "id" (Key a)                      :> Delete '[JSON] () -- delete
 
-    runupd :: Key a -> a -> EitherT ServantErr IO ()
-    runupd key val = runQuery conn $ mupd key val
+-------------------------------------------
 
-    rundel :: Key a -> EitherT ServantErr IO ()
-    rundel key = runQuery conn $ mdel key
+runCreateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
+       => SqlBackend
+       -> a
+       -> EitherT ServantErr IO (Key a)
+runCreateRest conn val = runQuery conn $ mnew val
 
-runQuery :: forall a . SqlBackend -> WebService a -> EitherT ServantErr IO a
-runQuery conn webservice = runSqlConn (runDbDSL webservice) conn
+runReadRest :: (PersistEntity a, ToBackendKey SqlBackend a)
+       => SqlBackend
+       -> Key a
+       -> EitherT ServantErr IO a
+runReadRest conn key = runQuery conn $ mgetOr404 key
+
+runUpdateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
+       => SqlBackend
+       -> Key a
+       -> a
+       -> EitherT ServantErr IO ()
+runUpdateRest conn key val = runQuery conn $ mupd key val
+
+runDeleteRest :: (PersistEntity a, ToBackendKey SqlBackend a)
+       => SqlBackend
+       -> Key a
+       -> EitherT ServantErr IO ()
+runDeleteRest conn key = runQuery conn $ mdel key
+
+runQuery :: forall a . SqlBackend -> DbDSL a -> EitherT ServantErr IO a
+runQuery conn dbDSL = runSqlConn (runDbDSL dbDSL) conn
                                 `catch` \(err::ServantErr) -> throwError err
 
-server :: SqlBackend -> Server MyApi
-server conn = runServant conn
-         :<|> runServant conn
+server :: SqlBackend
+       -> Server ( "author" :> CRUD Author
+              :<|> "post"   :> CRUD BlogPost )
+server conn =
+         -- Servant HTTP handlers for Author CRUD requests.
+            ( runCreateRest conn  -- Create Author
+         :<|> runReadRest conn  -- Read Author
+         :<|> runUpdateRest conn  -- Update Author
+         :<|> runDeleteRest conn  -- Delete Author
+            )
+            :<|>
+         -- Servant HTTP handlers for BlogPost CRUD requests.
+            ( runCreateRest conn  -- Create BlogPost
+         :<|> runReadRest conn  -- Read BlogPost
+         :<|> runUpdateRest conn  -- Update BlogPost
+         :<|> runDeleteRest conn  -- Delete BlogPost
+            )
 
 defaultMain :: IO ()
 defaultMain =
     runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 (serve myApi (server conn))
+        liftIO $ run 8080 $ serve myApiType $ server conn
+  where
+    myApiType :: Proxy ( "author" :> CRUD Author :<|> "post" :> CRUD BlogPost )
+    myApiType = Proxy
