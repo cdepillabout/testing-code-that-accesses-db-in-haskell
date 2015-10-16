@@ -10,6 +10,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE PolyKinds                  #-}
 {-# LANGUAGE QuasiQuotes                #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
@@ -56,15 +57,9 @@ import Servant
 
 share [ mkPersist sqlSettings, mkMigrate "migrateAll"]
       [persistLowerCase|
-Author json
-    name Text
-    UniqueName name
-    deriving Show
-
 BlogPost json
     title Text
     content Text
-    author AuthorId
     deriving Show
 |]
 
@@ -115,14 +110,6 @@ getOr404Db key = do
         Just val -> return val
         Nothing -> throwDb err404
 
--- | like `getByDb` but throws a 404 if it could not find the corresponding record
-getByOr404Db :: PC val => Unique val -> DbDSL (Entity val)
-getByOr404Db uniqueVal = do
-    maybeEntity <- getByDb uniqueVal
-    case maybeEntity of
-        Just entity -> return entity
-        Nothing -> throwDb err404
-
 runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
 runDbDSLInPersistent dbDSL =
     case view dbDSL of
@@ -152,7 +139,8 @@ runDbDSLInPersistent dbDSL =
         -- back the current transaction when you use 'Throw'.
         -- conn <- ask
         -- liftIO $ connRollback conn (getStmtConn conn)
-        liftIO $ putStrLn $ "error occured: " ++ show (httpStatusCode,httpStatusString)
+        liftIO $ putStrLn $
+            "error occured: " ++ show (httpStatusCode,httpStatusString)
         throwM servantErr
 
 -----------------
@@ -166,63 +154,52 @@ type CRUD a =                         ReqBody '[JSON] a :> Post '[JSON] (Key a) 
 
 -------------------------------------------
 
-runCreateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
-       => SqlBackend
-       -> a
-       -> EitherT ServantErr IO (Key a)
-runCreateRest conn val = runDbDSLInServant conn $ insertDb val
+type DbDSLInterpreterServant a = DbDSL a -> EitherT ServantErr IO a
 
-runReadRest :: (PersistEntity a, ToBackendKey SqlBackend a)
-       => SqlBackend
-       -> Key a
-       -> EitherT ServantErr IO a
-runReadRest conn key = runDbDSLInServant conn $ getOr404Db key
+runCreateBlogPost :: DbDSLInterpreterServant (Key BlogPost)
+                  -> BlogPost
+                  -> EitherT ServantErr IO (Key BlogPost)
+runCreateBlogPost interpreter val = interpreter $ insertDb val
 
-runUpdateRest :: (PersistEntity a, ToBackendKey SqlBackend a)
-       => SqlBackend
-       -> Key a
-       -> a
-       -> EitherT ServantErr IO ()
-runUpdateRest conn key val = runDbDSLInServant conn $ updateDb key val
+runReadBlogPost :: DbDSLInterpreterServant BlogPost
+                -> Key BlogPost
+                -> EitherT ServantErr IO BlogPost
+runReadBlogPost interpreter key = interpreter $ getOr404Db key
 
-runDeleteRest :: (PersistEntity a, ToBackendKey SqlBackend a)
-       => SqlBackend
-       -> Key a
-       -> EitherT ServantErr IO ()
-runDeleteRest conn key = runDbDSLInServant conn $ deleteDb key
+runUpdateBlogPost :: DbDSLInterpreterServant ()
+                  -> Key BlogPost
+                  -> BlogPost
+                  -> EitherT ServantErr IO ()
+runUpdateBlogPost interpreter key val = interpreter $ updateDb key val
 
-runDbDSLInServant :: forall a . SqlBackend -> DbDSL a -> EitherT ServantErr IO a
-runDbDSLInServant conn dbDSL = runSqlConn (runDbDSLInPersistent dbDSL) conn
-                                `catch` \(err::ServantErr) -> throwError err
+runDeleteBlogPost :: DbDSLInterpreterServant ()
+                  -> Key BlogPost
+                  -> EitherT ServantErr IO ()
+runDeleteBlogPost interpreter key = interpreter $ deleteDb key
 
-server :: SqlBackend
-       -> Server ( "author" :> CRUD Author
-              :<|> "post"   :> CRUD BlogPost )
-server conn =
-         -- Servant HTTP handlers for Author CRUD requests.
-            ( runCreateRest conn  -- Create Author
-         :<|> runReadRest conn  -- Read Author
-         :<|> runUpdateRest conn  -- Update Author
-         :<|> runDeleteRest conn  -- Delete Author
-            )
-            :<|>
-         -- Servant HTTP handlers for BlogPost CRUD requests.
-            ( runCreateRest conn  -- Create BlogPost
-         :<|> runReadRest conn  -- Read BlogPost
-         :<|> runUpdateRest conn  -- Update BlogPost
-         :<|> runDeleteRest conn  -- Delete BlogPost
-            )
+-- Servant HTTP handlers for BlogPost CRUD requests.
+server :: (forall a . DbDSLInterpreterServant a)
+       -> Server ("blogpost" :> CRUD BlogPost)
+server interpreter = runCreateBlogPost interpreter
+                :<|> runReadBlogPost interpreter
+                :<|> runUpdateBlogPost interpreter
+                :<|> runDeleteBlogPost interpreter
 
 defaultMain :: IO ()
 defaultMain =
     runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 $ serve myApiType $ server conn
+        liftIO $ run 8080 $ serve myApiType $ server $ runDbDSLInServant conn
   where
-    myApiType :: Proxy ( "author" :> CRUD Author :<|> "post" :> CRUD BlogPost )
+    myApiType :: Proxy ( "blogpost" :> CRUD BlogPost )
     myApiType = Proxy
 
+    runDbDSLInServant :: SqlBackend
+                      -> DbDSL a
+                      -> EitherT ServantErr IO a
+    runDbDSLInServant conn dbDSL = runSqlConn (runDbDSLInPersistent dbDSL) conn
+                                    `catch` \(err::ServantErr) -> throwError err
 
 --- XXX: Hack.
 instance Exception ServantErr
