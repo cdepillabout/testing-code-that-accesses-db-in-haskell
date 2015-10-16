@@ -48,7 +48,11 @@ test-suite free-monad-test
   hs-source-dirs:      test
   main-is:             Test.hs
   build-depends:       base
+                     , aeson
                      , free-monad
+                     , hspec-wai >= 0.6 && < 1
+                     , hspec-wai-json >= 0.6 && < 1
+                     , wai
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
