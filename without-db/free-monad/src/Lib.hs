@@ -143,47 +143,57 @@ runDbDSLInPersistent dbDSL =
             "error occured: " ++ show (httpStatusCode,httpStatusString)
         throwM servantErr
 
+runDbDSLInServant :: SqlBackend
+                  -> DbDSL a
+                  -> EitherT ServantErr IO a
+runDbDSLInServant conn dbDSL =
+    runSqlConn (runDbDSLInPersistent dbDSL) conn
+        `catch` \(err::ServantErr) -> throwError err
+
 -----------------
 -- servant api --
 -----------------
 
-type CRUD a =                         ReqBody '[JSON] a :> Post '[JSON] (Key a) -- create
-         :<|> Capture "id" (Key a)                      :> Get '[JSON] a -- read
-         :<|> Capture "id" (Key a) :> ReqBody '[JSON] a :> Put '[JSON] () -- update
-         :<|> Capture "id" (Key a)                      :> Delete '[JSON] () -- delete
-
+type MyApi = "create" :> ReqBody '[JSON] BlogPost
+                      :> Post '[JSON] (Key BlogPost)
+        :<|> "read" :> Capture "id" (Key BlogPost)
+                    :> Get '[JSON] BlogPost
+        :<|> "update" :> Capture "id" (Key BlogPost)
+                      :> ReqBody '[JSON] BlogPost
+                      :> Put '[JSON] ()
+        :<|> "delete" :> Capture "id" (Key BlogPost)
+                      :> Delete '[JSON] ()
 -------------------------------------------
 
 type DbDSLInterpreterServant a = DbDSL a -> EitherT ServantErr IO a
 
-runCreateBlogPost :: DbDSLInterpreterServant (Key BlogPost)
+createBlogPost :: DbDSLInterpreterServant (Key BlogPost)
                   -> BlogPost
                   -> EitherT ServantErr IO (Key BlogPost)
-runCreateBlogPost interpreter val = interpreter $ insertDb val
+createBlogPost interpreter val = interpreter $ insertDb val
 
-runReadBlogPost :: DbDSLInterpreterServant BlogPost
+readBlogPost :: DbDSLInterpreterServant BlogPost
                 -> Key BlogPost
                 -> EitherT ServantErr IO BlogPost
-runReadBlogPost interpreter key = interpreter $ getOr404Db key
+readBlogPost interpreter key = interpreter $ getOr404Db key
 
-runUpdateBlogPost :: DbDSLInterpreterServant ()
+updateBlogPost :: DbDSLInterpreterServant ()
                   -> Key BlogPost
                   -> BlogPost
                   -> EitherT ServantErr IO ()
-runUpdateBlogPost interpreter key val = interpreter $ updateDb key val
+updateBlogPost interpreter key val = interpreter $ updateDb key val
 
-runDeleteBlogPost :: DbDSLInterpreterServant ()
+deleteBlogPost :: DbDSLInterpreterServant ()
                   -> Key BlogPost
                   -> EitherT ServantErr IO ()
-runDeleteBlogPost interpreter key = interpreter $ deleteDb key
+deleteBlogPost interpreter key = interpreter $ deleteDb key
 
 -- Servant HTTP handlers for BlogPost CRUD requests.
-server :: (forall a . DbDSLInterpreterServant a)
-       -> Server ("blogpost" :> CRUD BlogPost)
-server interpreter = runCreateBlogPost interpreter
-                :<|> runReadBlogPost interpreter
-                :<|> runUpdateBlogPost interpreter
-                :<|> runDeleteBlogPost interpreter
+server :: (forall a . DbDSLInterpreterServant a) -> Server MyApi
+server interpreter = createBlogPost interpreter
+                :<|> readBlogPost interpreter
+                :<|> updateBlogPost interpreter
+                :<|> deleteBlogPost interpreter
 
 defaultMain :: IO ()
 defaultMain =
@@ -192,14 +202,9 @@ defaultMain =
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ run 8080 $ serve myApiType $ server $ runDbDSLInServant conn
   where
-    myApiType :: Proxy ( "blogpost" :> CRUD BlogPost )
+    myApiType :: Proxy ( "blogpost" :> MyApi )
     myApiType = Proxy
 
-    runDbDSLInServant :: SqlBackend
-                      -> DbDSL a
-                      -> EitherT ServantErr IO a
-    runDbDSLInServant conn dbDSL = runSqlConn (runDbDSLInPersistent dbDSL) conn
-                                    `catch` \(err::ServantErr) -> throwError err
 
 --- XXX: Hack.
 instance Exception ServantErr
