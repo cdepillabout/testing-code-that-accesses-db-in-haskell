@@ -25,7 +25,6 @@ library
                      , mtl
                      , operational
                      , persistent
-                     , persistent-postgresql
                      , persistent-sqlite
                      , persistent-template
                      , servant
