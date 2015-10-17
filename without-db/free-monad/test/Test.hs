@@ -70,35 +70,35 @@ testDbDSLInServant dbRef dbDSL = do
 app :: IO Application
 app = do
     dbRef <- newIORef (IntMap.empty, 1)
-    return $ serve myApiType $ server $ testDbDSLInServant dbRef
+    return $ serve blogPostApiProxy $ server $ testDbDSLInServant dbRef
 
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
         it "responds with 404 because nothing has been inserted" $ do
-            get "/blogpost/read/1" `shouldRespondWith` 404
+            get "/read/1" `shouldRespondWith` 404
 
         it "responds with 200 after inserting something" $ do
-            postJson "/blogpost/create" testBlogPost `shouldRespondWith` 201
-            get "/blogpost/read/1" `shouldRespondWithJson` (200, testBlogPost)
+            postJson "/create" testBlogPost `shouldRespondWith` 201
+            get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
 
     describe "PUT blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
-            putJson "/blogpost/update/1" testBlogPost `shouldRespondWith` 204
+            putJson "/update/1" testBlogPost `shouldRespondWith` 204
 
         it "can GET after PUT" $ do
-            putJson "/blogpost/update/1" testBlogPost `shouldRespondWith` 204
-            get "/blogpost/read/1" `shouldRespondWithJson` (200, testBlogPost)
+            putJson "/update/1" testBlogPost `shouldRespondWith` 204
+            get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
 
     describe "DELETE blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
-            delete "/blogpost/delete/1" `shouldRespondWith` 204
+            delete "/delete/1" `shouldRespondWith` 204
 
         it "GET after DELETE returns 404" $ do
-            postJson "/blogpost/create" testBlogPost `shouldRespondWith` 201
-            get "/blogpost/read/1" `shouldRespondWith` 200
-            delete "/blogpost/delete/1" `shouldRespondWith` 204
-            get "/blogpost/read/1" `shouldRespondWith` 404
+            postJson "/create" testBlogPost `shouldRespondWith` 201
+            get "/read/1" `shouldRespondWith` 200
+            delete "/delete/1" `shouldRespondWith` 204
+            get "/read/1" `shouldRespondWith` 404
   where
     postJson :: (ToJSON a) => ByteString -> a -> WaiSession SResponse
     postJson path =
