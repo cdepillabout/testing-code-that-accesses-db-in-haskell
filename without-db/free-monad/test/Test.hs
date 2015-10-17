@@ -6,9 +6,8 @@
 
 module Main (main) where
 
-import Control.Monad.Catch (catch, throwM)
 import Control.Monad.Error.Class (throwError)
-import Control.Monad.Operational (ProgramViewT(..), singleton, view)
+import Control.Monad.Operational (ProgramViewT(..), view)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
 import Data.ByteString (ByteString)
@@ -17,57 +16,15 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Lazy as IntMap
 import Database.Persist (Key)
 import Database.Persist.Sql (fromSqlKey, toSqlKey)
-import Network.HTTP.Types.Method (methodPost)
+import Network.HTTP.Types.Method (methodPost, methodPut)
 import Network.Wai (Application)
 import Network.Wai.Test (SResponse)
-import Servant.Server (ServantErr(..), Server, serve)
-import System.IO
+import Servant.Server (ServantErr(..), serve)
 import Test.Hspec
 import Test.Hspec.Wai
-import Test.Hspec.Wai.JSON
 
 import Lib
 
--- testDbDSL :: DbDSL a -> IO a
--- testDbDSL dbDSL =
---     hPutStrLn stderr "in testDbDSLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
---     case view dbDSL of
---         Return a -> a
---         -- a :>>= nextStep -> go a nextStep
---         a :>>= nextStep -> undefined
---   where
-    -- go :: DbAction a -> (a -> DbDSL b) -> SqlPersistT (EitherT ServantErr IO) b
-    -- go (GetDb key) nextStep = do
-    --     maybeVal <- get key
-    --     runDbDSLInPersistent $ nextStep maybeVal
-    -- go (InsertDb val) nextStep = do
-    --     key <- insert val
-    --     runDbDSLInPersistent $ nextStep key
-    -- go (DelDb key) nextStep = do
-    --     delete key
-    --     runDbDSLInPersistent $ nextStep ()
-    -- go (GetByDb uniqueVal) nextStep = do
-    --     maybeEntityVal <- getBy uniqueVal
-    --     runDbDSLInPersistent $ nextStep maybeEntityVal
-    -- go (UpdateDb key val) nextStep = do
-    --     replace key val
-    --     runDbDSLInPersistent $ nextStep ()
-    -- go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
-    --     -- In actual usage, you may need to rollback the database
-    --     -- connection here.  It doesn't matter for this simple
-    --     -- demonstration, but in production you'll probably want to roll
-    --     -- back the current transaction when you use 'Throw'.
-    --     -- conn <- ask
-    --     -- liftIO $ connRollback conn (getStmtConn conn)
-    --     liftIO $ putStrLn $
-    --         "error occured: " ++ show (httpStatusCode,httpStatusString)
-    --     throwM servantErr
-
--- testDbDSLInServant :: DbDSL a
---                    -> EitherT ServantErr IO a
--- testDbDSLInServant dbDSL =
---     runSqlConn (runDbDSLInPersistent dbDSL) conn
---         `catch` \(err::ServantErr) -> throwError err
 testDbDSLInServant :: IORef (IntMap BlogPost, Int)
                    -> DbDSL a
                    -> EitherT ServantErr IO a
@@ -79,31 +36,29 @@ testDbDSLInServant dbRef dbDSL = do
     go :: DbAction a -> (a -> DbDSL b) -> EitherT ServantErr IO b
     go (GetDb key) nextStep = do
         (intMap, _) <- liftIO $ readIORef dbRef
-        liftIO $ putStrLn $ "In GetDB, intMap is " ++ show intMap
         let maybeBlogPost = IntMap.lookup (sqlKeyToInt key) intMap
         testDbDSLInServant dbRef $ nextStep maybeBlogPost
 
     go (InsertDb blogPost) nextStep = do
         (intMap, idCounter) <- liftIO $ readIORef dbRef
-        liftIO $ putStrLn $ "In InsertDb beginning, intMap is " ++ show intMap
         let newIntMap = IntMap.insert idCounter blogPost intMap
             newCounter = idCounter + 1
         liftIO $ writeIORef dbRef (newIntMap, newCounter)
         testDbDSLInServant dbRef . nextStep $ intToSqlKey idCounter
 
     go (DelDb key) nextStep = do
-        -- delete key
-        -- runDbDSLInPersistent $ nextStep ()
-        undefined
+        (intMap, counter) <- liftIO $ readIORef dbRef
+        let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
+        liftIO $ writeIORef dbRef (newIntMap, counter)
+        testDbDSLInServant dbRef $ nextStep ()
 
-    go (UpdateDb key val) nextStep = do
-        -- replace key val
-        -- runDbDSLInPersistent $ nextStep ()
-        undefined
+    go (UpdateDb key blogPost) nextStep = do
+        (intMap, counter) <- liftIO $ readIORef dbRef
+        let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
+        liftIO $ writeIORef dbRef (newIntMap, counter)
+        testDbDSLInServant dbRef $ nextStep ()
 
-    go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
-        liftIO $ putStrLn $
-            "error occured: " ++ show (httpStatusCode,httpStatusString)
+    go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ =
         throwError servantErr
 
     sqlKeyToInt :: Key BlogPost -> Int
@@ -119,38 +74,51 @@ app = do
 
 spec :: Spec
 spec = with app $ do
-    describe "GET /blogpost/read/1" $ do
+    describe "GET blogpost" $ do
         it "responds with 404 because nothing has been inserted" $ do
             get "/blogpost/read/1" `shouldRespondWith` 404
 
         it "responds with 200 after inserting something" $ do
-            let blogPost = (BlogPost "title" "content")
-            postJson "/blogpost/create" blogPost
-                `shouldRespondWith` 201
-            get "/blogpost/read/1" `shouldRespondWithJson` (200, blogPost)
+            postJson "/blogpost/create" testBlogPost `shouldRespondWith` 201
+            get "/blogpost/read/1" `shouldRespondWithJson` (200, testBlogPost)
 
-        -- it "responds with 200 / 'hello'" $ do
-        --     get "/" `shouldRespondWith` "hello" {matchStatus = 200}
+    describe "PUT blogpost" $ do
+        it "responds with 204 even when key doesn't exist in DB" $ do
+            putJson "/blogpost/update/1" testBlogPost `shouldRespondWith` 204
 
-        -- it "has 'Content-Type: text/plain; charset=utf-8'" $ do
-        --     get "/" `shouldRespondWith` 200 {matchHeaders = ["Content-Type" <:> "text/plain; charset=utf-8"]}
+        it "can GET after PUT" $ do
+            putJson "/blogpost/update/1" testBlogPost `shouldRespondWith` 204
+            get "/blogpost/read/1" `shouldRespondWithJson` (200, testBlogPost)
 
-  -- describe "GET /some-json" $ do
-    -- it "responds with some JSON" $ do
-      -- get "/some-json" `shouldRespondWith` [json|{foo: 23, bar: 42}|]
+    describe "DELETE blogpost" $ do
+        it "responds with 204 even when key doesn't exist in DB" $ do
+            delete "/blogpost/delete/1" `shouldRespondWith` 204
 
-postJson :: (ToJSON a) => ByteString -> a -> WaiSession SResponse
-postJson path =
-    request methodPost path [("Content-Type", "application/json")] . encode
+        it "GET after DELETE returns 404" $ do
+            postJson "/blogpost/create" testBlogPost `shouldRespondWith` 201
+            get "/blogpost/read/1" `shouldRespondWith` 200
+            delete "/blogpost/delete/1" `shouldRespondWith` 204
+            get "/blogpost/read/1" `shouldRespondWith` 404
+  where
+    postJson :: (ToJSON a) => ByteString -> a -> WaiSession SResponse
+    postJson path =
+        request methodPost path [("Content-Type", "application/json")] . encode
 
-shouldRespondWithJson :: (ToJSON a)
-                      => WaiSession SResponse
-                      -> (Integer, a)
-                      -> WaiExpectation
-shouldRespondWithJson request (expectedStatus, expectedValue) =
-    let matcher = (fromInteger expectedStatus)
-                    { matchBody = Just $ encode expectedValue }
-    in shouldRespondWith request matcher
+    putJson :: (ToJSON a) => ByteString -> a -> WaiSession SResponse
+    putJson path =
+        request methodPut path [("Content-Type", "application/json")] . encode
+
+    shouldRespondWithJson :: (ToJSON a)
+                          => WaiSession SResponse
+                          -> (Integer, a)
+                          -> WaiExpectation
+    shouldRespondWithJson req (expectedStatus, expectedValue) =
+        let matcher = (fromInteger expectedStatus)
+                        { matchBody = Just $ encode expectedValue }
+        in shouldRespondWith req matcher
+
+    testBlogPost :: BlogPost
+    testBlogPost = BlogPost "title" "content"
 
 main :: IO ()
 main = hspec spec
