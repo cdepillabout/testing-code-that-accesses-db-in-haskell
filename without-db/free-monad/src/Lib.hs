@@ -115,31 +115,26 @@ runDbDSLInServant conn dbDSL =
     runDbDSLInPersistent dbDSL' =
         case view dbDSL' of
             Return a -> return a
-            a :>>= nextStep -> go a nextStep
-      where
-        go :: DbAction c
-           -> (c -> DbDSL d)
-           -> SqlPersistT (EitherT ServantErr IO) d
-        go (GetDb key) nextStep = do
-            maybeVal <- get key
-            runDbDSLInPersistent $ nextStep maybeVal
-        go (InsertDb blogPost) nextStep = do
-            key <- insert blogPost
-            runDbDSLInPersistent $ nextStep key
-        go (DelDb key) nextStep = do
-            delete key
-            runDbDSLInPersistent $ nextStep ()
-        go (UpdateDb key blogPost) nextStep = do
-            replace key blogPost
-            runDbDSLInPersistent $ nextStep ()
-        go (ThrowDb servantErr) _ =
-            -- In actual usage, you may need to rollback the database
-            -- connection here.  It doesn't matter for this simple
-            -- demonstration, but in production you'll probably want to roll
-            -- back the current transaction when you use 'Throw'.
-            -- conn <- ask
-            -- liftIO $ connRollback conn (getStmtConn conn)
-            throwM servantErr
+            (GetDb key) :>>= nextStep -> do
+                maybeVal <- get key
+                runDbDSLInPersistent $ nextStep maybeVal
+            (InsertDb blogPost) :>>= nextStep -> do
+                key <- insert blogPost
+                runDbDSLInPersistent $ nextStep key
+            (DelDb key) :>>= nextStep -> do
+                delete key
+                runDbDSLInPersistent $ nextStep ()
+            (UpdateDb key blogPost) :>>= nextStep -> do
+                replace key blogPost
+                runDbDSLInPersistent $ nextStep ()
+            (ThrowDb servantErr) :>>= _ ->
+                -- In actual usage, you may need to rollback the database
+                -- connection here.  It doesn't matter for this simple
+                -- demonstration, but in production you'll probably want to roll
+                -- back the current transaction when you use 'Throw'.
+                -- conn <- ask
+                -- liftIO $ connRollback conn (getStmtConn conn)
+                throwM servantErr
 
 -----------------
 -- servant api --
@@ -183,7 +178,7 @@ blogPostApiProxy = Proxy
 
 defaultMain :: IO ()
 defaultMain =
-    runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
+    runStderrLoggingT $ withSqliteConn "production.sqlite" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ run 8080 $ serve blogPostApiProxy $ server $ runDbDSLInServant conn

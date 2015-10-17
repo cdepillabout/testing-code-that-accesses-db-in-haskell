@@ -31,36 +31,29 @@ testDbDSLInServant :: IORef (IntMap BlogPost, Int)
 testDbDSLInServant dbRef dbDSL = do
     case view dbDSL of
         Return a -> return a
-        a :>>= nextStep -> go a nextStep
+        (GetDb key) :>>= nextStep -> do
+            (intMap, _) <- liftIO $ readIORef dbRef
+            let maybeBlogPost = IntMap.lookup (sqlKeyToInt key) intMap
+            testDbDSLInServant dbRef $ nextStep maybeBlogPost
+        (InsertDb blogPost) :>>= nextStep -> do
+            (intMap, idCounter) <- liftIO $ readIORef dbRef
+            let newIntMap = IntMap.insert idCounter blogPost intMap
+                newCounter = idCounter + 1
+            liftIO $ writeIORef dbRef (newIntMap, newCounter)
+            testDbDSLInServant dbRef . nextStep $ intToSqlKey idCounter
+        (DelDb key) :>>= nextStep -> do
+            (intMap, counter) <- liftIO $ readIORef dbRef
+            let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
+            liftIO $ writeIORef dbRef (newIntMap, counter)
+            testDbDSLInServant dbRef $ nextStep ()
+        (UpdateDb key blogPost) :>>= nextStep -> do
+            (intMap, counter) <- liftIO $ readIORef dbRef
+            let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
+            liftIO $ writeIORef dbRef (newIntMap, counter)
+            testDbDSLInServant dbRef $ nextStep ()
+        (ThrowDb servantErr) :>>= _ ->
+            throwError servantErr
   where
-    go :: DbAction a -> (a -> DbDSL b) -> EitherT ServantErr IO b
-    go (GetDb key) nextStep = do
-        (intMap, _) <- liftIO $ readIORef dbRef
-        let maybeBlogPost = IntMap.lookup (sqlKeyToInt key) intMap
-        testDbDSLInServant dbRef $ nextStep maybeBlogPost
-
-    go (InsertDb blogPost) nextStep = do
-        (intMap, idCounter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.insert idCounter blogPost intMap
-            newCounter = idCounter + 1
-        liftIO $ writeIORef dbRef (newIntMap, newCounter)
-        testDbDSLInServant dbRef . nextStep $ intToSqlKey idCounter
-
-    go (DelDb key) nextStep = do
-        (intMap, counter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
-        liftIO $ writeIORef dbRef (newIntMap, counter)
-        testDbDSLInServant dbRef $ nextStep ()
-
-    go (UpdateDb key blogPost) nextStep = do
-        (intMap, counter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
-        liftIO $ writeIORef dbRef (newIntMap, counter)
-        testDbDSLInServant dbRef $ nextStep ()
-
-    go (ThrowDb servantErr) _ =
-        throwError servantErr
-
     sqlKeyToInt :: Key BlogPost -> Int
     sqlKeyToInt key = fromInteger . toInteger $ fromSqlKey key
 
