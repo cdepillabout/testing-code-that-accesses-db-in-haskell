@@ -10,16 +10,16 @@ see the blog post for more information.  Please see below for more information
 about the application in question.
 
 The five projects are separated into two groups.  Three of the projects are in
-the `without-db/` directory, and the other two projects are in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
+the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory, and the other two projects are in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
 directory.
 
-The three projects in the `without-db/` directory do not use a database in the
+The three projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory do not use a database in the
 tests.  The two projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory do access a database in
 the tests.
 
-## `without-db/` directory
+## [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory
 
-There are three projects in the `without-db/` directory.  These three projects
+There are three projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory.  These three projects
 do not connect to an actual database in the tests.  This has the benefit of
 making the tests not dependent on a database.
 
