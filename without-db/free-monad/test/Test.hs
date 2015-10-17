@@ -58,7 +58,7 @@ testDbDSLInServant dbRef dbDSL = do
         liftIO $ writeIORef dbRef (newIntMap, counter)
         testDbDSLInServant dbRef $ nextStep ()
 
-    go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ =
+    go (ThrowDb servantErr) _ =
         throwError servantErr
 
     sqlKeyToInt :: Key BlogPost -> Int
