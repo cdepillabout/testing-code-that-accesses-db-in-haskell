@@ -35,8 +35,7 @@ import Control.Monad.Operational (Program, ProgramViewT(..), singleton, view)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Proxy (Proxy(..))
 import Database.Persist
-    ( Entity, Key, PersistEntity, PersistEntityBackend, ToBackendKey, Unique
-    , delete, get, getBy, insert, replace )
+    ( Key, ToBackendKey, delete, get, insert, replace )
 import Database.Persist.Sqlite
     ( SqlBackend, SqlPersistT, runMigration, runSqlConn, toSqlKey
     , withSqliteConn )
@@ -69,45 +68,39 @@ BlogPost json
 -------------------------
 
 type DbDSL = Program DbAction
-type PC val = (PersistEntityBackend val ~ SqlBackend, PersistEntity val)
 data DbAction a where
-    ThrowDb  :: ServantErr               -> DbAction a
-    GetDb    :: PC val => Key val        -> DbAction (Maybe val)
-    GetByDb  :: PC val => Unique val     -> DbAction (Maybe (Entity val))
-    InsertDb :: PC val =>            val -> DbAction (Key val)
-    UpdateDb :: PC val => Key val -> val -> DbAction ()
-    DelDb    :: PC val => Key val        -> DbAction ()
+    ThrowDb  :: ServantErr -> DbAction a
+    GetDb    :: Key BlogPost -> DbAction (Maybe BlogPost)
+    InsertDb :: BlogPost -> DbAction (Key BlogPost)
+    UpdateDb :: Key BlogPost -> BlogPost -> DbAction ()
+    DelDb    :: Key BlogPost -> DbAction ()
 
 -- | throws an error
 throwDb :: ServantErr -> DbDSL a
 throwDb err = singleton (ThrowDb err)
 
 -- | dual of `persistent`'s `get`
-getDb :: PC val => Key val -> DbDSL (Maybe val)
+getDb :: Key BlogPost -> DbDSL (Maybe BlogPost)
 getDb key = singleton (GetDb key)
 
--- | dual of `persistent`'s `getBy`
-getByDb :: PC val => Unique val ->  DbDSL (Maybe (Entity val))
-getByDb uniqueVal = singleton (GetByDb uniqueVal)
-
 -- | dual of `persistent`'s `insert`
-insertDb :: PC val => val ->  DbDSL (Key val)
-insertDb val = singleton (InsertDb val)
+insertDb :: BlogPost ->  DbDSL (Key BlogPost)
+insertDb blogPost = singleton (InsertDb blogPost)
 
 -- | dual of `persistent`'s `update`
-updateDb :: PC val => Key val -> val -> DbDSL ()
-updateDb key val = singleton (UpdateDb key val)
+updateDb :: Key BlogPost -> BlogPost -> DbDSL ()
+updateDb key blogPost = singleton (UpdateDb key blogPost)
 
 -- | dual of `persistent`'s `delete`
-deleteDb :: PC val => Key val -> DbDSL ()
+deleteDb :: Key BlogPost -> DbDSL ()
 deleteDb key = singleton (DelDb key)
 
 -- | like `getDb` but throws a 404 if it could not find the corresponding record
-getOr404Db :: PC val => Key val -> DbDSL val
+getOr404Db :: Key BlogPost -> DbDSL BlogPost
 getOr404Db key = do
     maybeVal <- getDb key
     case maybeVal of
-        Just val -> return val
+        Just blogPost -> return blogPost
         Nothing -> throwDb err404
 
 runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
@@ -120,17 +113,14 @@ runDbDSLInPersistent dbDSL =
     go (GetDb key) nextStep = do
         maybeVal <- get key
         runDbDSLInPersistent $ nextStep maybeVal
-    go (InsertDb val) nextStep = do
-        key <- insert val
+    go (InsertDb blogPost) nextStep = do
+        key <- insert blogPost
         runDbDSLInPersistent $ nextStep key
     go (DelDb key) nextStep = do
         delete key
         runDbDSLInPersistent $ nextStep ()
-    go (GetByDb uniqueVal) nextStep = do
-        maybeEntityVal <- getBy uniqueVal
-        runDbDSLInPersistent $ nextStep maybeEntityVal
-    go (UpdateDb key val) nextStep = do
-        replace key val
+    go (UpdateDb key blogPost) nextStep = do
+        replace key blogPost
         runDbDSLInPersistent $ nextStep ()
     go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
         -- In actual usage, you may need to rollback the database
@@ -195,16 +185,15 @@ server interpreter = createBlogPost interpreter
                 :<|> updateBlogPost interpreter
                 :<|> deleteBlogPost interpreter
 
+myApiType :: Proxy ( "blogpost" :> MyApi )
+myApiType = Proxy
+
 defaultMain :: IO ()
 defaultMain =
     runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ run 8080 $ serve myApiType $ server $ runDbDSLInServant conn
-  where
-    myApiType :: Proxy ( "blogpost" :> MyApi )
-    myApiType = Proxy
-
 
 --- XXX: Hack.
 instance Exception ServantErr
