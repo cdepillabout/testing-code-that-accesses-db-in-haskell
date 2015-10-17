@@ -121,14 +121,13 @@ spec :: Spec
 spec = with app $ do
     describe "GET /blogpost/read/1" $ do
         it "responds with 404 because nothing has been inserted" $ do
-            liftIO $ putStrLn "first test..."
             get "/blogpost/read/1" `shouldRespondWith` 404
 
         it "responds with 200 after inserting something" $ do
-            liftIO $ putStrLn "second test..."
-            postJson "/blogpost/create" (BlogPost "title" "content")
+            let blogPost = (BlogPost "title" "content")
+            postJson "/blogpost/create" blogPost
                 `shouldRespondWith` 201
-            get "/blogpost/read/1" `shouldRespondWith` 200
+            get "/blogpost/read/1" `shouldRespondWithJson` (200, blogPost)
 
         -- it "responds with 200 / 'hello'" $ do
         --     get "/" `shouldRespondWith` "hello" {matchStatus = 200}
@@ -143,6 +142,15 @@ spec = with app $ do
 postJson :: (ToJSON a) => ByteString -> a -> WaiSession SResponse
 postJson path =
     request methodPost path [("Content-Type", "application/json")] . encode
+
+shouldRespondWithJson :: (ToJSON a)
+                      => WaiSession SResponse
+                      -> (Integer, a)
+                      -> WaiExpectation
+shouldRespondWithJson request (expectedStatus, expectedValue) =
+    let matcher = (fromInteger expectedStatus)
+                    { matchBody = Just $ encode expectedValue }
+    in shouldRespondWith request matcher
 
 main :: IO ()
 main = hspec spec
