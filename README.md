@@ -10,18 +10,18 @@ see the blog post for more information.  Please see below for more information
 about the application in question.
 
 The five projects are separated into two groups.  Three of the projects are in
-the `without-db/` directory, and the other two projects are in the `with-db/`
+the `without-db/` directory, and the other two projects are in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
 directory.
 
 The three projects in the `without-db/` directory do not use a database in the
-tests.  The two projects in the `with-db/` directory do access a database in
+tests.  The two projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory do access a database in
 the tests.
 
 ## `without-db/` directory
 
 There are three projects in the `without-db/` directory.  These three projects
-do not use a database in the tests.  This has the benefit of making the tests
-not dependent on a database.
+do not connect to an actual database in the tests.  This has the benefit of
+making the tests not dependent on a database.
 
 The three projects are as follows:
 
@@ -45,6 +45,18 @@ The three projects are as follows:
       access a database, while in tests the datatype is filled in with methods
       that simulate accessing a database by using a hashmap.
 
-## `with-db/` directory
+## [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory
+
+There are two projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory.  These two projects connect
+to an actual database even in the tests.
+
+- `with-db/test-database/`
+    - This approach uses two separate databases.  There is a production
+      database and a test database.  When unit tests are run, they are only
+      accessing the test database.  When code is run in production, it is only
+      accessing the production database.
+- `with-db/in-memory-database/`
+    - Thie approach is similar to the previous one, except an in-memory
+      database is used for the test database.
 
 ## Explanation of the Application
