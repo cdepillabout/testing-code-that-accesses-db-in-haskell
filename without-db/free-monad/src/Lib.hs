@@ -167,7 +167,7 @@ server interpreter = createBlogPost
                 :<|> deleteBlogPost
   where
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
-    createBlogPost val = interpreter $ insertDb val
+    createBlogPost blogPost = interpreter $ insertDb blogPost
 
     readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
     readBlogPost key = interpreter $ getOr404Db key
