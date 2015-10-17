@@ -103,35 +103,6 @@ getOr404Db key = do
         Just blogPost -> return blogPost
         Nothing -> throwDb err404
 
-runDbDSLInPersistent :: DbDSL a -> SqlPersistT (EitherT ServantErr IO) a
-runDbDSLInPersistent dbDSL =
-    case view dbDSL of
-        Return a -> return a
-        a :>>= nextStep -> go a nextStep
-  where
-    go :: DbAction a -> (a -> DbDSL b) -> SqlPersistT (EitherT ServantErr IO) b
-    go (GetDb key) nextStep = do
-        maybeVal <- get key
-        runDbDSLInPersistent $ nextStep maybeVal
-    go (InsertDb blogPost) nextStep = do
-        key <- insert blogPost
-        runDbDSLInPersistent $ nextStep key
-    go (DelDb key) nextStep = do
-        delete key
-        runDbDSLInPersistent $ nextStep ()
-    go (UpdateDb key blogPost) nextStep = do
-        replace key blogPost
-        runDbDSLInPersistent $ nextStep ()
-    go (ThrowDb servantErr@(ServantErr httpStatusCode httpStatusString _ _)) _ = do
-        -- In actual usage, you may need to rollback the database
-        -- connection here.  It doesn't matter for this simple
-        -- demonstration, but in production you'll probably want to roll
-        -- back the current transaction when you use 'Throw'.
-        -- conn <- ask
-        -- liftIO $ connRollback conn (getStmtConn conn)
-        liftIO $ putStrLn $
-            "error occured: " ++ show (httpStatusCode,httpStatusString)
-        throwM servantErr
 
 runDbDSLInServant :: SqlBackend
                   -> DbDSL a
@@ -139,61 +110,83 @@ runDbDSLInServant :: SqlBackend
 runDbDSLInServant conn dbDSL =
     runSqlConn (runDbDSLInPersistent dbDSL) conn
         `catch` \(err::ServantErr) -> throwError err
+  where
+    runDbDSLInPersistent :: DbDSL b -> SqlPersistT (EitherT ServantErr IO) b
+    runDbDSLInPersistent dbDSL' =
+        case view dbDSL' of
+            Return a -> return a
+            a :>>= nextStep -> go a nextStep
+      where
+        go :: DbAction c
+           -> (c -> DbDSL d)
+           -> SqlPersistT (EitherT ServantErr IO) d
+        go (GetDb key) nextStep = do
+            maybeVal <- get key
+            runDbDSLInPersistent $ nextStep maybeVal
+        go (InsertDb blogPost) nextStep = do
+            key <- insert blogPost
+            runDbDSLInPersistent $ nextStep key
+        go (DelDb key) nextStep = do
+            delete key
+            runDbDSLInPersistent $ nextStep ()
+        go (UpdateDb key blogPost) nextStep = do
+            replace key blogPost
+            runDbDSLInPersistent $ nextStep ()
+        go (ThrowDb servantErr) _ =
+            -- In actual usage, you may need to rollback the database
+            -- connection here.  It doesn't matter for this simple
+            -- demonstration, but in production you'll probably want to roll
+            -- back the current transaction when you use 'Throw'.
+            -- conn <- ask
+            -- liftIO $ connRollback conn (getStmtConn conn)
+            throwM servantErr
 
 -----------------
 -- servant api --
 -----------------
 
-type MyApi = "create" :> ReqBody '[JSON] BlogPost
-                      :> Post '[JSON] (Key BlogPost)
-        :<|> "read" :> Capture "id" (Key BlogPost)
-                    :> Get '[JSON] BlogPost
-        :<|> "update" :> Capture "id" (Key BlogPost)
-                      :> ReqBody '[JSON] BlogPost
-                      :> Put '[JSON] ()
-        :<|> "delete" :> Capture "id" (Key BlogPost)
-                      :> Delete '[JSON] ()
+type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
+                            :> Post '[JSON] (Key BlogPost)
+
+              :<|> "read"   :> Capture "id" (Key BlogPost)
+                            :> Get '[JSON] BlogPost
+
+              :<|> "update" :> Capture "id" (Key BlogPost)
+                            :> ReqBody '[JSON] BlogPost
+                            :> Put '[JSON] ()
+
+              :<|> "delete" :> Capture "id" (Key BlogPost)
+                            :> Delete '[JSON] ()
 -------------------------------------------
 
-type DbDSLInterpreterServant a = DbDSL a -> EitherT ServantErr IO a
-
-createBlogPost :: DbDSLInterpreterServant (Key BlogPost)
-                  -> BlogPost
-                  -> EitherT ServantErr IO (Key BlogPost)
-createBlogPost interpreter val = interpreter $ insertDb val
-
-readBlogPost :: DbDSLInterpreterServant BlogPost
-                -> Key BlogPost
-                -> EitherT ServantErr IO BlogPost
-readBlogPost interpreter key = interpreter $ getOr404Db key
-
-updateBlogPost :: DbDSLInterpreterServant ()
-                  -> Key BlogPost
-                  -> BlogPost
-                  -> EitherT ServantErr IO ()
-updateBlogPost interpreter key val = interpreter $ updateDb key val
-
-deleteBlogPost :: DbDSLInterpreterServant ()
-                  -> Key BlogPost
-                  -> EitherT ServantErr IO ()
-deleteBlogPost interpreter key = interpreter $ deleteDb key
-
 -- Servant HTTP handlers for BlogPost CRUD requests.
-server :: (forall a . DbDSLInterpreterServant a) -> Server MyApi
-server interpreter = createBlogPost interpreter
-                :<|> readBlogPost interpreter
-                :<|> updateBlogPost interpreter
-                :<|> deleteBlogPost interpreter
+server :: (forall a . DbDSL a -> EitherT ServantErr IO a) -> Server BlogPostApi
+server interpreter = createBlogPost
+                :<|> readBlogPost
+                :<|> updateBlogPost
+                :<|> deleteBlogPost
+  where
+    createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
+    createBlogPost val = interpreter $ insertDb val
 
-myApiType :: Proxy ( "blogpost" :> MyApi )
-myApiType = Proxy
+    readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
+    readBlogPost key = interpreter $ getOr404Db key
+
+    updateBlogPost :: Key BlogPost -> BlogPost -> EitherT ServantErr IO ()
+    updateBlogPost key val = interpreter $ updateDb key val
+
+    deleteBlogPost :: Key BlogPost -> EitherT ServantErr IO ()
+    deleteBlogPost key = interpreter $ deleteDb key
+
+blogPostApiProxy :: Proxy BlogPostApi
+blogPostApiProxy = Proxy
 
 defaultMain :: IO ()
 defaultMain =
     runStderrLoggingT $ withSqliteConn ":memory:" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 $ serve myApiType $ server $ runDbDSLInServant conn
+        liftIO $ run 8080 $ serve blogPostApiProxy $ server $ runDbDSLInServant conn
 
 --- XXX: Hack.
 instance Exception ServantErr
