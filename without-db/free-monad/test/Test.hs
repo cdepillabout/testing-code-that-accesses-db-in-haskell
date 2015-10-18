@@ -1,3 +1,7 @@
+
+-- These are the tests for our api.  The only real interesting parts are
+-- the 'testDbDSLInServant' and 'app' functions.
+
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -25,6 +29,9 @@ import Test.Hspec.Wai
 
 import Lib
 
+-- | This is our dsl interpreter for these unit tests.  It's very similar
+-- to 'Lib.runDbDSLInServant', except that it doesn't actually access
+-- a database.  Instead, it just uses an 'IntMap' to simulate a database.
 testDbDSLInServant :: IORef (IntMap BlogPost, Int)
                    -> DbDSL a
                    -> EitherT ServantErr IO a
@@ -60,11 +67,18 @@ testDbDSLInServant dbRef dbDSL = do
     intToSqlKey :: Int -> Key BlogPost
     intToSqlKey int = toSqlKey . fromInteger $ toInteger int
 
+-- | This creates a Wai 'Application'.
 app :: IO Application
 app = do
+    -- Create an 'IORef' to a tuple of an 'IntMap' and integer.
     dbRef <- newIORef (IntMap.empty, 1)
-    return $ serve blogPostApiProxy $ server $ testDbDSLInServant dbRef
+    return . serve blogPostApiProxy . server $ testDbDSLInServant dbRef
 
+-- | These are our actual unit tests.  They should be relatively
+-- straightforward.
+--
+-- This function is using 'app', which in turn uses our test dsl interpreter
+-- ('testDbDSLInServant').
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
