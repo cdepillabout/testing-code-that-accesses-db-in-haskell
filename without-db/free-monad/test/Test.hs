@@ -11,6 +11,7 @@
 module Main (main) where
 
 import Control.Monad.Error.Class (throwError)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Operational (ProgramViewT(..), view)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
@@ -24,8 +25,10 @@ import Network.HTTP.Types.Method (methodPost, methodPut)
 import Network.Wai (Application)
 import Network.Wai.Test (SResponse)
 import Servant.Server (ServantErr(..), serve)
-import Test.Hspec
+import Test.Hspec (Spec, describe, hspec, it)
 import Test.Hspec.Wai
+    ( WaiExpectation, WaiSession, delete, get, matchBody, request
+    , shouldRespondWith, with )
 
 import Lib
 
@@ -72,7 +75,7 @@ app :: IO Application
 app = do
     -- Create an 'IORef' to a tuple of an 'IntMap' and integer.
     dbRef <- newIORef (IntMap.empty, 1)
-    return . serve blogPostApiProxy . server $ testDbDSLInServant dbRef
+    return . serve blogPostApiProxy $ server (testDbDSLInServant dbRef)
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.

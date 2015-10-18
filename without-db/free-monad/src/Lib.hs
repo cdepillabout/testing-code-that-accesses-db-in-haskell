@@ -114,6 +114,11 @@ BlogPost json
 -- (PROTIP: The following is not actually a free-monad, but is instead using
 -- the operational monad.  In practice, it's not a huge difference, but it
 -- is something to be aware of.)
+--
+-- (PROTIP2: Check out the argument to 'GetDb': 'Key'.  'Key' is defined in
+-- Persistent.  Ideally, this dsl would have no dependency on Persistent at
+-- all.  I made the decision to have this dsl be dependent on Persistent in
+-- order to simply the code and make it easier to understand.)
 type DbDSL = Program DbAction
 data DbAction a where
     ThrowDb  :: ServantErr -> DbAction a
