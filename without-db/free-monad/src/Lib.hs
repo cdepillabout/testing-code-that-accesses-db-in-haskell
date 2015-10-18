@@ -1,4 +1,13 @@
--- Inspired by
+
+-- This approach uses a free-monad to make a DSL to describe database
+-- access.  Two separate interpreters for the DSL are created.  One
+-- interpreter is used in production and one interpreter is used for tests.
+-- The interpreter used in production actually interacts with the database
+-- (e.g. putting data into the database and getting data out of the
+-- database).  The interpreter used for tests simulates a database using a
+-- hashmap.
+--
+-- This is heavily inspired by
 -- https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls.
 
 {-# LANGUAGE ConstraintKinds            #-}
