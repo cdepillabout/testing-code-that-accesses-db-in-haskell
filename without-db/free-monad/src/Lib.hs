@@ -187,8 +187,9 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- database.  In testing, the 'interpreter' will just use a Hashmap in
 -- memory to simulate database access.
 --
--- The cool thing is that this 'server' function doesn't have to worry
--- about what 'interpreter' is doing.  It just uses it.
+-- The cool thing is that this 'server' function doesn't have to change
+-- between production and testing.  The only thing that will change is the
+-- 'interpreter' function.
 server :: (forall a . DbDSL a -> EitherT ServantErr IO a) -> Server BlogPostApi
 server interpreter = createBlogPost
                 :<|> readBlogPost
@@ -306,6 +307,14 @@ runDbDSLInServant conn dbDSL =
 ----------
 ----------
 
+-- This is the main function.  It basically does three things.
+--
+--  1. Open up a connection to the sqlite database "production.sqlite".  In
+--  production this would probably be something like Postgres, MongoDB,
+--  AWS's DynamoDB, etc.
+--  2. Perform migration.  This creates the "blog_post" table in the
+--  database if it doesn't exist.
+--  3. Run our 'server' function, which effectively runs the api.
 defaultMain :: IO ()
 defaultMain =
     runStderrLoggingT $ withSqliteConn "production.sqlite" $ \conn -> do
@@ -320,10 +329,29 @@ defaultMain =
 -----------------
 -----------------
 
---- XXX: Hack.
+--- | XXX: Hack.
+--
+-- In the dsl interpreter, we @'throwM' 'ServantErr'@.  In order to use
+-- 'ServantErr' with 'throwM', 'ServantErr' needs to be an instance of
+-- 'Exception'.  In production code you probably don't want to do this.  It
+-- makes this example code slightly simpler, but in actual code you
+-- probably want to create your own exception type.
+--
+-- If you reuse 'ServantErr' like this you're creating an
+-- <https://wiki.haskell.org/Orphan_instance orphan instance>.
 instance Exception ServantErr
 
--- XXX: Hack.
+-- | XXX: Hack.
+--
+-- We need this to be able to read @'Key' 'BlogPost'@ from our api (for
+-- example, in the "delete" api).  This instance gives us the ability to
+-- create a @'Key' a@ from 'Text'.
+--
+-- This isn't bad, per se, but it needs UndecidableInstances to be able to
+-- compile.  You can see
+-- <https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls this
+-- blog post> on how to do something similar without having to use
+-- UndecidableInstances.
 instance (ToBackendKey SqlBackend a) => FromText (Key a) where
     fromText :: Text -> Maybe (Key a)
     fromText text = toSqlKey <$> fromText text
