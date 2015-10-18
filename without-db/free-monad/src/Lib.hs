@@ -51,7 +51,9 @@ import Servant
     , ReqBody, ServantErr(..), Server, err404, serve )
 
 ----------------------------------
+----------------------------------
 -- Persistent model definitions --
+----------------------------------
 ----------------------------------
 
 -- This uses Persistent (a database library) to define a BlogPost data
@@ -78,12 +80,14 @@ BlogPost json
     deriving Show
 |]
 
---------------------------------
--- DSL for accessing database --
---------------------------------
+----------------------------------
+----------------------------------
+-- DSL for accessing a database --
+----------------------------------
+----------------------------------
 
--- | The whole point of this "free-monad" example is the couple of lines
--- below.  We are defining a DSL that represents actions that can be
+-- | The whole point of this "free-monad" example is the next couple of
+-- lines.  We are defining a DSL that represents actions that can be
 -- performed on a database.
 --
 -- A 'DbAction' is the /type/ of an action that can be performed on
@@ -91,16 +95,16 @@ BlogPost json
 -- getting a row of data from the database.  'InsertDb' is a data
 -- constructor that represents putting a row of data into the database.
 --
--- 'DbDSL' represents a sequence of 'DbAction's.  The magic starts to come
--- in later on in this file.  We will construct an /interpreter/ that takes
--- a 'DbDSL' and actually performs the actions against a real database.
--- Then, in testing, we will write a /different interpreter/ that just
--- operates on a hashmap in memory.  It never actually operates on a real
--- database.
+-- 'DbDSL' represents a sequence of 'DbAction's.  The magic starts to
+-- happen later in this file.  We will construct an /interpreter/ that
+-- takes a 'DbDSL' and actually performs the actions against a real
+-- database.  Then, in testing, we will write a /different interpreter/
+-- that just operates on a hashmap in memory.  It never actually operates
+-- on a real database.
 --
--- PROTIP: The following is not actually a free-monad, but is instead using
+-- (PROTIP: The following is not actually a free-monad, but is instead using
 -- the operational monad.  In practice, it's not a huge difference, but it
--- is something to be aware of.
+-- is something to be aware of.)
 type DbDSL = Program DbAction
 data DbAction a where
     ThrowDb  :: ServantErr -> DbAction a
@@ -143,7 +147,9 @@ getOr404Db key = do
         Nothing -> throwDb err404
 
 -----------------
+-----------------
 -- servant api --
+-----------------
 -----------------
 
 -- | This defines a type which represents the API.  A description of the
@@ -166,9 +172,23 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- Servant-specfic and not too interesting.  If you want to learn more
 -- about it, see the Servant tutorial.
 --
--- The interesting thing is the 'createBlogPost', 'readBlogPost',
--- 'updateBlogPost', and 'deleteBlogPost' functions.  See their
--- documentation for an explanation of what they are doing.
+-- However, there are two interesting things here.  The first is the
+-- 'createBlogPost', 'readBlogPost', 'updateBlogPost', and 'deleteBlogPost'
+-- functions.  See their documentation for an explanation of what they are
+-- doing.
+--
+-- The second interesting thing is the 'interpreter' arguement.  The
+-- 'interpreter' is a function that takes a 'DbDSL' and runs it in
+-- a Servant context (that is, inside a @'EitherT' 'ServantErr' IO@ monad).
+--
+-- This is what is actually evaluating the dsl.  In production the
+-- 'interpreter' will actually access the database.  It will put new
+-- 'BlogPost's in the database and read existing 'BlogPost's from the
+-- database.  In testing, the 'interpreter' will just use a Hashmap in
+-- memory to simulate database access.
+--
+-- The cool thing is that this 'server' function doesn't have to worry
+-- about what 'interpreter' is doing.  It just uses it.
 server :: (forall a . DbDSL a -> EitherT ServantErr IO a) -> Server BlogPostApi
 server interpreter = createBlogPost
                 :<|> readBlogPost
@@ -181,60 +201,110 @@ server interpreter = createBlogPost
     -- input, and we need to return a 'Key' 'BlogPost' (which you can think
     -- of as an integer that corresponds to a database id).
     --
-    --
+    -- We use 'interpreter' and pass it the dsl @'insertDb' blogPost@.
+    -- This dsl corresponds to inserting a 'BlogPost'.  The 'interpreter'
+    -- will execute this dsl in the Servant context (@'EitherT'
+    -- 'ServantErr' IO@).
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
     createBlogPost blogPost = interpreter $ insertDb blogPost
 
+    -- Similar to 'createBlogPost'.
     readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
     readBlogPost key = interpreter $ getOr404Db key
 
+    -- Similar to 'createBlogPost'.
     updateBlogPost :: Key BlogPost -> BlogPost -> EitherT ServantErr IO ()
     updateBlogPost key val = interpreter $ updateDb key val
 
+    -- Similar to 'createBlogPost'.
     deleteBlogPost :: Key BlogPost -> EitherT ServantErr IO ()
     deleteBlogPost key = interpreter $ deleteDb key
 
+-- | This is another artifact of Servant.  See the Servant tutorial or this
+-- article I wrote about Servant for an overview of what this is:
+-- <http://functor.tokyo/blog/2015-08-13-servant-type-families>
 blogPostApiProxy :: Proxy BlogPostApi
 blogPostApiProxy = Proxy
 
-
-
-
+------------------------------
 ------------------------------
 -- database dsl interpreter --
 ------------------------------
+------------------------------
 
+-- | Remember the @interpreter@ argument for the 'server' function?  That's
+-- basically what this function is.
+--
+-- If you curry the 'SqlBackend' argument, then you get a function @'DbDSL'
+-- a -> 'EitherT' 'ServantErr' IO a@.  It takes a 'DbDSL' and evaluates it
+-- in a Servant context (e.g. the @'EitherT' 'ServantErrr' IO@ monad).
+--
+-- The real interesting part is the 'runDbDSLInPersistent' helper
+-- function.  It runs a 'DbDSL' in a persistent context (e.g. the
+-- @'SqlPersistT' ('EitherT' 'ServantErr' IO)@ monad).  It actually
+-- accesses the database.  It uses functions provided by the Persistent
+-- library, for example, 'get', 'insert', 'replace'.
 runDbDSLInServant :: SqlBackend
                   -> DbDSL a
                   -> EitherT ServantErr IO a
 runDbDSLInServant conn dbDSL =
+    -- 'runSqlConn' takes sql connection info ('SqlBackend') and uses it to
+    -- run an 'SqlPersistT' against a real database.  We catch 'ServantErr'
+    -- and re-throw them in the @'EitherT' 'ServantErr'@ monad.
     runSqlConn (runDbDSLInPersistent dbDSL) conn
         `catch` \(err::ServantErr) -> throwError err
   where
+    -- | This takes a 'DbDSL' and runs it in a persistent context (e.g. the
+    -- @'SqlPersistT' ('EitherT' 'ServantErr' IO)@ monad).  It actually
+    -- accesses the database.
+    --
+    -- It works by pattern-matching on the dsl, using some machinery from
+    -- the "Control.Monad.Operational" module.  Check out that module for
+    -- an explanation of how it works.
+    --
+    -- Everything other than 'ThrowDb' calls 'runDbDSLInPersistent'
+    -- recursively with the next step of the dsl.
     runDbDSLInPersistent :: DbDSL b -> SqlPersistT (EitherT ServantErr IO) b
     runDbDSLInPersistent dbDSL' =
         case view dbDSL' of
             Return a -> return a
+            -- This evaluates a 'GetDb' request to actually get
+            -- a 'BlogPost' from the database.
             (GetDb key) :>>= nextStep -> do
+                -- 'get' is a function from Persistent that gets
+                -- a 'BlogPost' from the database given a key.
                 maybeVal <- get key
                 runDbDSLInPersistent $ nextStep maybeVal
+            -- Evaluate a 'InsertDb' request to insert a 'BlogPost' in to the
+            -- database.
             (InsertDb blogPost) :>>= nextStep -> do
                 key <- insert blogPost
                 runDbDSLInPersistent $ nextStep key
+            -- Evaluate a 'DelDb' request to delete a 'BlogPost' from the
+            -- database.
             (DelDb key) :>>= nextStep -> do
                 delete key
                 runDbDSLInPersistent $ nextStep ()
+            -- Evaluate a 'UpdateDb request to update a 'BlogPost' in the
+            -- database.
             (UpdateDb key blogPost) :>>= nextStep -> do
                 replace key blogPost
                 runDbDSLInPersistent $ nextStep ()
+            -- Throw an error to indicate that something went wrong.
             (ThrowDb servantErr) :>>= _ ->
                 -- In actual usage, you may need to rollback the database
-                -- connection here.  It doesn't matter for this simple
+                -- transaction here.  It doesn't matter for this simple
                 -- demonstration, but in production you'll probably want to roll
                 -- back the current transaction when you use 'Throw'.
                 -- conn <- ask
                 -- liftIO $ connRollback conn (getStmtConn conn)
                 throwM servantErr
+
+----------
+----------
+-- main --
+----------
+----------
 
 defaultMain :: IO ()
 defaultMain =
@@ -242,6 +312,13 @@ defaultMain =
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ run 8080 $ serve blogPostApiProxy $ server $ runDbDSLInServant conn
+
+
+-----------------
+-----------------
+-- other stuff --
+-----------------
+-----------------
 
 --- XXX: Hack.
 instance Exception ServantErr
