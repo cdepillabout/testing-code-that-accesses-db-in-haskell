@@ -2,7 +2,12 @@
 -- These are the tests for our api.  The only real interesting parts are
 -- the 'testDbDSLInServant' and 'app' functions.
 
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
@@ -10,9 +15,12 @@
 
 module Main (main) where
 
+import Control.Exception (throwIO)
+import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Operational (ProgramViewT(..), view)
+import Control.Monad.Reader (ReaderT)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
 import Data.ByteString (ByteString)
@@ -30,7 +38,7 @@ import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
     , shouldRespondWith, with )
 
-import Lib (BlogPost(..), DbAction(..), DbDSL, blogPostApiProxy, server)
+import Lib (BlogPost(..), DBAccess(..), DbAction(..), DbDSL, blogPostApiProxy, server)
 
 -- | This is our dsl interpreter for these unit tests.  It's very similar
 -- to 'Lib.runDbDSLInServant', except that it doesn't actually access
@@ -95,6 +103,40 @@ testDbDSLInServant dbRef dbDSL = do
     intToSqlKey :: Int -> Key BlogPost
     intToSqlKey int = toSqlKey . fromInteger $ toInteger int
 
+newtype F a = F { unF :: IORef (IntMap BlogPost, Int) -> IO a }
+
+instance Functor F where fmap f (F aFunc) = F $ fmap f . aFunc
+instance Applicative F where
+    pure = F . const . return
+    (F aTobFunc) <*> (F aFunc) = F $ \ioref -> aTobFunc ioref <*> aFunc ioref
+instance Monad F where
+    (F aFunc) >>= (aToFb) = F $ \ioref -> aFunc ioref >>= flip unF ioref . aToFb
+instance MonadThrow F where throwM = F . const . throwIO
+
+newtype G m a = G { unG :: ReaderT (IORef (IntMap BlogPost, Int)) m a } deriving (Functor, Applicative, Monad, MonadThrow)
+
+-- instance DBAccess (F) (IORef (IntMap BlogPost, Int)) where
+
+--     runDb :: IORef (IntMap BlogPost, Int)
+--           -> (IORef (IntMap BlogPost, Int) -> IO a)
+--           -> EitherT ServantErr IO a
+--     runDb conn query =
+--         -- runSqlConn query conn
+--         --     `catch` \(err::ServantErr) -> throwError err
+--         undefined
+
+--     getDb' :: Key BlogPost -> IO (Maybe BlogPost)
+--     getDb' = undefined
+
+--     insertDb' :: BlogPost -> IO (Key BlogPost)
+--     insertDb' = undefined
+
+--     deleteDb' :: Key BlogPost -> IO ()
+--     deleteDb' = undefined
+
+--     updateDb' :: Key BlogPost -> BlogPost -> IO ()
+--     updateDb' = undefined
+
 -- | This creates a Wai 'Application'.
 --
 -- It just creates a new 'IORef' to our 'IntMap', and passes it to
@@ -106,7 +148,8 @@ app = do
     -- The 'IntMap' will be our database.  The 'Int' will be a count
     -- holding the highest id in the database.
     dbRef <- newIORef (IntMap.empty, 1)
-    return . serve blogPostApiProxy $ server (testDbDSLInServant dbRef)
+    -- return . serve blogPostApiProxy $ server (testDbDSLInServant dbRef)
+    undefined
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
