@@ -15,11 +15,9 @@
 
 module Main (main) where
 
-import Control.Exception (throwIO)
-import Control.Monad.Catch (MonadThrow, catch, throwM)
+import Control.Monad.Catch (MonadThrow, catch)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Operational (ProgramViewT(..), view)
 import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
@@ -38,7 +36,7 @@ import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
     , shouldRespondWith, with )
 
-import Lib (BlogPost(..), DBAccess(..), DbAction(..), DbDSL, blogPostApiProxy, server)
+import Lib (BlogPost(..), DBAccess(..), blogPostApiProxy, server)
 
 -- | This is our 'DBAccess' instance for these unit tests.  It's very similar
 -- to the 'DBAccess' instance in "Lib", except that it doesn't actually access
@@ -61,7 +59,7 @@ newtype DBIORef = DBIORef { unDBIORef :: IORef (IntMap BlogPost, Int) }
 
 -- | This is also a simple newtype wrapper for our DB Monad.  This is very
 -- similar to Persistent's 'SqlPersistT' type.
-newtype DB m a = DB { unDB :: ReaderT DBIORef m a }
+newtype DB m a = DB (ReaderT DBIORef m a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader DBIORef, MonadThrow)
 
 instance DBAccess (DB IO) DBIORef where
