@@ -89,9 +89,12 @@ testDbDSLInServant dbRef dbDSL = do
         (ThrowDb servantErr) :>>= _ ->
             throwError servantErr
   where
+    -- | Turn a 'Key' 'BlogPost' into an 'Int'.  This is for storing a 'Key'
+    -- 'BlogPost' in our 'IntMap'.
     sqlKeyToInt :: Key BlogPost -> Int
     sqlKeyToInt key = fromInteger . toInteger $ fromSqlKey key
 
+    -- | Opposite of 'sqlKeyToInt'.
     intToSqlKey :: Int -> Key BlogPost
     intToSqlKey int = toSqlKey . fromInteger $ toInteger int
 
