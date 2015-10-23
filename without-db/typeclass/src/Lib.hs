@@ -44,7 +44,6 @@ import Control.Monad.Catch (MonadThrow, catch, throwM)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStderrLoggingT)
-import Control.Monad.Operational (Program, ProgramViewT(..), singleton, view)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Proxy (Proxy(..))
 import Database.Persist
@@ -148,7 +147,7 @@ class (MonadThrow m, Monad m) => DBAccess m d | m -> d, d -> m where
 -- constraint.  The functions in 'DBAcesss' can be combined arbitrarily.
 getOr404Db :: DBAccess m d => Key BlogPost -> m BlogPost
 getOr404Db key = do
-    maybeVal <- getDb' key
+    maybeVal <- getDb key
     case maybeVal of
         Just blogPost -> return blogPost
         Nothing -> throwM err404
@@ -218,19 +217,19 @@ server conn = createBlogPost
     -- will execute this dsl in the Servant context (@'EitherT'
     -- 'ServantErr' IO@).
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
-    createBlogPost blogPost = runDb conn $ insertDb' blogPost
+    createBlogPost blogPost = runDb conn $ insertDb blogPost
 
     -- Similar to 'createBlogPost'.
     readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
-    readBlogPost key = runDb conn $ getOr404Db' key
+    readBlogPost key = runDb conn $ getOr404Db key
 
     -- Similar to 'createBlogPost'.
     updateBlogPost :: Key BlogPost -> BlogPost -> EitherT ServantErr IO ()
-    updateBlogPost key val = runDb conn $ updateDb' key val
+    updateBlogPost key val = runDb conn $ updateDb key val
 
     -- Similar to 'createBlogPost'.
     deleteBlogPost :: Key BlogPost -> EitherT ServantErr IO ()
-    deleteBlogPost key = runDb conn $ deleteDb' key
+    deleteBlogPost key = runDb conn $ deleteDb key
 
 -- | This is another artifact of Servant.  See the Servant tutorial or this
 -- article I wrote about Servant for an overview of what this is:
@@ -240,98 +239,30 @@ blogPostApiProxy = Proxy
 
 ------------------------------
 ------------------------------
--- database dsl interpreter --
+-- database typeclass instance --
 ------------------------------
 ------------------------------
 
--- | Remember the @interpreter@ argument for the 'server' function?  That's
--- basically what this function is.
---
--- If you curry the 'SqlBackend' argument, then you get a function @'DbDSL'
--- a -> 'EitherT' 'ServantErr' IO a@.  It takes a 'DbDSL' and evaluates it
--- in a Servant context (e.g. the @'EitherT' 'ServantErrr' IO@ monad).
---
--- The real interesting part is the 'runDbDSLInPersistent' helper
--- function.  It runs a 'DbDSL' in a persistent context (e.g. the
--- @'SqlPersistT' ('EitherT' 'ServantErr' IO)@ monad).  It actually
--- accesses the database.  It uses functions provided by the Persistent
--- library, for example, 'get', 'insert', 'replace'.
-runDbDSLInServant :: SqlBackend
-                  -> DbDSL a
-                  -> EitherT ServantErr IO a
-runDbDSLInServant conn dbDSL =
-    -- 'runSqlConn' takes sql connection info ('SqlBackend') and uses it to
-    -- run an 'SqlPersistT' against a real database.  We catch 'ServantErr'
-    -- and re-throw them in the @'EitherT' 'ServantErr'@ monad.
-    runSqlConn (runDbDSLInPersistent dbDSL) conn
-        `catch` \(err::ServantErr) -> throwError err
-  where
-    -- | This takes a 'DbDSL' and runs it in a persistent context (e.g. the
-    -- @'SqlPersistT' ('EitherT' 'ServantErr' IO)@ monad).  It actually
-    -- accesses the database.
-    --
-    -- It works by pattern-matching on the dsl, using some machinery from
-    -- the "Control.Monad.Operational" module.  Check out that module for
-    -- an explanation of how it works.
-    --
-    -- Everything other than 'ThrowDb' calls 'runDbDSLInPersistent'
-    -- recursively with the next step of the dsl.
-    runDbDSLInPersistent :: DbDSL b -> SqlPersistT (EitherT ServantErr IO) b
-    runDbDSLInPersistent dbDSL' =
-        case view dbDSL' of
-            Return a -> return a
-            -- This evaluates a 'GetDb' request to actually get
-            -- a 'BlogPost' from the database.
-            (GetDb key) :>>= nextStep -> do
-                -- 'get' is a function from Persistent that gets
-                -- a 'BlogPost' from the database given a key.
-                maybeVal <- get key
-                runDbDSLInPersistent $ nextStep maybeVal
-            -- Evaluate a 'InsertDb' request to insert a 'BlogPost' in to the
-            -- database.
-            (InsertDb blogPost) :>>= nextStep -> do
-                key <- insert blogPost
-                runDbDSLInPersistent $ nextStep key
-            -- Evaluate a 'DelDb' request to delete a 'BlogPost' from the
-            -- database.
-            (DelDb key) :>>= nextStep -> do
-                delete key
-                runDbDSLInPersistent $ nextStep ()
-            -- Evaluate a 'UpdateDb request to update a 'BlogPost' in the
-            -- database.
-            (UpdateDb key blogPost) :>>= nextStep -> do
-                replace key blogPost
-                runDbDSLInPersistent $ nextStep ()
-            -- Throw an error to indicate that something went wrong.
-            (ThrowDb servantErr) :>>= _ ->
-                -- In actual usage, you may need to rollback the database
-                -- transaction here.  It doesn't matter for this simple
-                -- demonstration, but in production you'll probably want to roll
-                -- back the current transaction when you use 'Throw'.
-                -- conn <- ask
-                -- liftIO $ connRollback conn (getStmtConn conn)
-                throwM servantErr
-
+-- | Here is our instance of 'DBAccess' for accessing the database in
+-- production.  It pretty much just directly wraps the calls to Persistent.
 instance DBAccess (SqlPersistT IO) SqlBackend where
 
-    runDb :: SqlBackend
-          -> SqlPersistT IO a
-          -> EitherT ServantErr IO a
+    runDb :: SqlBackend -> SqlPersistT IO a -> EitherT ServantErr IO a
     runDb conn query =
         liftIO (runSqlConn query conn)
             `catch` \(err::ServantErr) -> throwError err
 
-    getDb' :: Key BlogPost -> SqlPersistT IO (Maybe BlogPost)
-    getDb' = get
+    getDb :: Key BlogPost -> SqlPersistT IO (Maybe BlogPost)
+    getDb = get
 
-    insertDb' :: BlogPost -> SqlPersistT IO (Key BlogPost)
-    insertDb' = insert
+    insertDb :: BlogPost -> SqlPersistT IO (Key BlogPost)
+    insertDb = insert
 
-    deleteDb' :: Key BlogPost -> SqlPersistT IO ()
-    deleteDb' = delete
+    deleteDb :: Key BlogPost -> SqlPersistT IO ()
+    deleteDb = delete
 
-    updateDb' :: Key BlogPost -> BlogPost -> SqlPersistT IO ()
-    updateDb' = replace
+    updateDb :: Key BlogPost -> BlogPost -> SqlPersistT IO ()
+    updateDb = replace
 
 ----------
 ----------
@@ -363,27 +294,14 @@ defaultMain =
 
 --- | XXX: Hack.
 --
--- In the dsl interpreter, we @'throwM' 'ServantErr'@.  In order to use
--- 'ServantErr' with 'throwM', 'ServantErr' needs to be an instance of
--- 'Exception'.  In production code you probably don't want to do this.  It
--- makes this example code slightly simpler, but in actual code you
--- probably want to create your own exception type.
---
--- If you reuse 'ServantErr' like this you're creating an
--- <https://wiki.haskell.org/Orphan_instance orphan instance>.
+-- Read the comment at the bottom of Lib.hs in the free-monad
+-- implementation to find out more about this.
 instance Exception ServantErr
 
 -- | XXX: Hack.
 --
--- We need this to be able to read @'Key' 'BlogPost'@ from our api (for
--- example, in the "delete" api).  This instance gives us the ability to
--- create a @'Key' a@ from 'Text'.
---
--- This isn't bad, per se, but it needs UndecidableInstances to be able to
--- compile.  You can see
--- <https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls this
--- blog post> on how to do something similar without having to use
--- UndecidableInstances.
+-- Read the comment at the bottom of Lib.hs in the free-monad
+-- implementation to find out more about this.
 instance (ToBackendKey SqlBackend a) => FromText (Key a) where
     fromText :: Text -> Maybe (Key a)
     fromText text = toSqlKey <$> fromText text

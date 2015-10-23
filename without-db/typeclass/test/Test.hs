@@ -47,8 +47,8 @@ import Lib (BlogPost(..), DBAccess(..), blogPostApiProxy, server)
 -- 'ServantErrr' IO@ monad).
 --
 -- It's using an 'IORef' to hold a tuple of the the 'IntMap' and 'Int'
--- corresponding to the id count for simplicity, but it could easily be
--- rewritten to use something like a 'State' monad.
+-- (corresponding to the id count) for simplicity, but it could easily be
+-- rewritten to use something like a 'State' monad instead of an IORef.
 --
 -- The 'Int' corresponding to the id count is simply the highest id of
 -- something in the database.  Everytime we insert something we increase
@@ -74,16 +74,16 @@ instance DBAccess (DB IO) DBIORef where
             `catch` \(err::ServantErr) -> throwError err
 
     -- | Get a 'BlogPost' from the hashmap given the key.'
-    getDb' :: Key BlogPost -> DB IO (Maybe BlogPost)
-    getDb' key = do
+    getDb :: Key BlogPost -> DB IO (Maybe BlogPost)
+    getDb key = do
         -- Get the 'IntMap' from the 'IORef'.
         (intMap, _) <- liftIO . readIORef . unDBIORef =<< ask
         -- Lookup the key of the 'BlogPost' in the 'IntMap' and return it.
         return $ IntMap.lookup (sqlKeyToInt key) intMap
 
     -- | Put a 'BlogPost' into the hashmap and return the 'Key'.
-    insertDb' :: BlogPost -> DB IO (Key BlogPost)
-    insertDb' blogPost = do
+    insertDb :: BlogPost -> DB IO (Key BlogPost)
+    insertDb blogPost = do
         (DBIORef dbRef) <- ask
         (intMap, idCounter) <- liftIO $ readIORef dbRef
         let newIntMap = IntMap.insert idCounter blogPost intMap
@@ -92,16 +92,16 @@ instance DBAccess (DB IO) DBIORef where
         return $ intToSqlKey idCounter
 
     -- | Delete a 'BlogPost' from the hashmap.
-    deleteDb' :: Key BlogPost -> DB IO ()
-    deleteDb' key = do
+    deleteDb :: Key BlogPost -> DB IO ()
+    deleteDb key = do
         (DBIORef dbRef) <- ask
         (intMap, counter) <- liftIO $ readIORef dbRef
         let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
         liftIO $ writeIORef dbRef (newIntMap, counter)
 
     -- | Overwrite a 'BlogPost' from the hashmap with a new value.
-    updateDb' :: Key BlogPost -> BlogPost -> DB IO ()
-    updateDb' key blogPost = do
+    updateDb :: Key BlogPost -> BlogPost -> DB IO ()
+    updateDb key blogPost = do
         (DBIORef dbRef) <- ask
         (intMap, counter) <- liftIO $ readIORef dbRef
         let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
@@ -127,7 +127,7 @@ app = do
     -- The 'IntMap' will be our database.  The 'Int' will be a count
     -- holding the highest id in the database.
     dbRef <- newIORef (IntMap.empty, 1)
-    return . serve blogPostApiProxy $ server (DBIORef dbRef)
+    return . serve blogPostApiProxy . server $ DBIORef dbRef
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
