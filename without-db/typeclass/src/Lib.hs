@@ -96,90 +96,62 @@ BlogPost json
 ----------------------------------------
 ----------------------------------------
 
+-- | The whole point of this "typeclass" example is the next couple of
+-- lines.  We are defining a typeclass that represents actions that can be
+-- performed on a database.
+--
+-- 'DBAccess' is our typeclass.  It represents types can be used to access
+-- a DB (whether on disk, in memory, etc).  It takes two parameters, @m@
+-- and @d@.
+--
+-- @m@ is the monad that we will be running in.  If you're doing something
+-- like accessing a database, this might be 'IO'.  If you're using
+-- Persistent it might be something like 'SqlPersistT' 'IO'.
+--
+-- @d@ is some data that needs to be passed in to actually run the database
+-- requests.  If we are using persistent, it will probably be 'SqlBackend'.
+--
+-- 'getDb' is a function that lets us get a specific 'BlogPost' from the
+-- database.  It is running in our @m@  monad.  The other functions are
+-- similar.
+--
+-- 'runDb' actually lets us run our @m@ in a Servant context.
+--
+-- Later on in this file, we will define an instance of 'DBAccess' that
+-- will allow us to access a Persistent database.  Then, in testing, we
+-- will define a different instance of 'DBAccess' that allows us to access
+-- an in-memory database modeled as a simple Hashmap.
+--
+-- (PROTIP1: Check out the argument to 'getDb': 'Key'.  'Key' is defined in
+-- Persistent.  Ideally, this dsl would have no dependency on Persistent at
+-- all.  I made the decision to have this dsl be dependent on Persistent in
+-- order to simply the code and make it easier to understand.)
+
+-- (PROTIP2: Modeling database access as a typeclass is very similar to how
+-- Persistent itself works.)
 class (MonadThrow m, Monad m) => DBAccess m d | m -> d, d -> m where
 
     runDb :: d -> m a -> EitherT ServantErr IO a
 
-    getDb' :: Key BlogPost -> m (Maybe BlogPost)
+    getDb :: Key BlogPost -> m (Maybe BlogPost)
 
-    insertDb' :: BlogPost -> m (Key BlogPost)
+    insertDb :: BlogPost -> m (Key BlogPost)
 
-    deleteDb' :: Key BlogPost -> m ()
+    deleteDb :: Key BlogPost -> m ()
 
-    updateDb' :: Key BlogPost -> BlogPost -> m ()
+    updateDb :: Key BlogPost -> BlogPost -> m ()
 
-getOr404Db' :: DBAccess m d => Key BlogPost -> m (BlogPost)
-getOr404Db' key = do
+-- | This tries to get a 'BlogPost' from our database, and throws an error
+-- if it can't.
+--
+-- Helper functions like this can easily be written by using the 'DBAccess'
+-- constraint.  The functions in 'DBAcesss' can be combined arbitrarily.
+getOr404Db :: DBAccess m d => Key BlogPost -> m BlogPost
+getOr404Db key = do
     maybeVal <- getDb' key
     case maybeVal of
         Just blogPost -> return blogPost
         Nothing -> throwM err404
-
-
--- | The whole point of this "free-monad" example is the next couple of
--- lines.  We are defining a DSL that represents actions that can be
--- performed on a database.
---
--- A 'DbAction' is the /type/ of an action that can be performed on
--- a database.  For example, 'GetDb' is a data constructor that represents
--- getting a row of data from the database.  'InsertDb' is a data
--- constructor that represents putting a row of data into the database.
---
--- 'DbDSL' represents a sequence of 'DbAction's.  The magic starts to
--- happen later in this file.  We will construct an /interpreter/ that
--- takes a 'DbDSL' and actually performs the actions against a real
--- database.  Then, in testing, we will write a /different interpreter/
--- that just operates on a hashmap in memory.  It never actually operates
--- on a real database.
---
--- (PROTIP: The following is not actually a free-monad, but is instead using
--- the operational monad.  In practice, it's not a huge difference, but it
--- is something to be aware of.)
---
--- (PROTIP2: Check out the argument to 'GetDb': 'Key'.  'Key' is defined in
--- Persistent.  Ideally, this dsl would have no dependency on Persistent at
--- all.  I made the decision to have this dsl be dependent on Persistent in
--- order to simply the code and make it easier to understand.)
-type DbDSL = Program DbAction
-data DbAction a where
-    ThrowDb  :: ServantErr -> DbAction a
-    GetDb    :: Key BlogPost -> DbAction (Maybe BlogPost)
-    InsertDb :: BlogPost -> DbAction (Key BlogPost)
-    UpdateDb :: Key BlogPost -> BlogPost -> DbAction ()
-    DelDb    :: Key BlogPost -> DbAction ()
-
--- The following helper functions make it easy to create a 'DbDSL'.  The
--- most interesting one is 'getOr404Db', which combines both 'getDb' and
--- 'throwDb' into one 'DbDSL'.
-
--- | Throws an error.
-throwDb :: ServantErr -> DbDSL a
-throwDb err = singleton (ThrowDb err)
-
--- | Get a 'BlogPost' from the database.
-getDb :: Key BlogPost -> DbDSL (Maybe BlogPost)
-getDb key = singleton (GetDb key)
-
--- | Insert a 'BlogPost' into the database and return its id.
-insertDb :: BlogPost ->  DbDSL (Key BlogPost)
-insertDb blogPost = singleton (InsertDb blogPost)
-
--- | Update a 'BlogPost' that already exists in the database.
-updateDb :: Key BlogPost -> BlogPost -> DbDSL ()
-updateDb key blogPost = singleton (UpdateDb key blogPost)
-
--- | Delete a 'BlogPost' from the database.
-deleteDb :: Key BlogPost -> DbDSL ()
-deleteDb key = singleton (DelDb key)
-
--- | Try to get a 'BlogPost' from the database.  If it doesn't exist, throw
--- an error.
-getOr404Db :: Key BlogPost -> DbDSL BlogPost
-getOr404Db key = do
-    maybeVal <- getDb key
-    case maybeVal of
-        Just blogPost -> return blogPost
-        Nothing -> throwDb err404
 
 -----------------
 -----------------
@@ -211,8 +183,12 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- 'createBlogPost', 'readBlogPost', 'updateBlogPost', and 'deleteBlogPost'
 -- functions.  See their documentation for an explanation of what they are
 -- doing.
+
+-- The second interesting thing is the @d@ arguement.  The
+-- 'interpreter' is a function that takes a 'DbDSL' and runs it in
+-- a Servant context (that is, inside a @'EitherT' 'ServantErr' IO@ monad).
 --
--- The second interesting thing is the 'interpreter' arguement.  The
+-- The second interesting thing is the @d@ arguement.  The
 -- 'interpreter' is a function that takes a 'DbDSL' and runs it in
 -- a Servant context (that is, inside a @'EitherT' 'ServantErr' IO@ monad).
 --
@@ -336,25 +312,25 @@ runDbDSLInServant conn dbDSL =
                 -- liftIO $ connRollback conn (getStmtConn conn)
                 throwM servantErr
 
-instance DBAccess (SqlPersistT (EitherT ServantErr IO)) SqlBackend where
+instance DBAccess (SqlPersistT IO) SqlBackend where
 
     runDb :: SqlBackend
-          -> SqlPersistT (EitherT ServantErr IO) a
+          -> SqlPersistT IO a
           -> EitherT ServantErr IO a
     runDb conn query =
-        runSqlConn query conn
+        liftIO (runSqlConn query conn)
             `catch` \(err::ServantErr) -> throwError err
 
-    getDb' :: Key BlogPost -> SqlPersistT (EitherT ServantErr IO) (Maybe BlogPost)
+    getDb' :: Key BlogPost -> SqlPersistT IO (Maybe BlogPost)
     getDb' = get
 
-    insertDb' :: BlogPost -> SqlPersistT (EitherT ServantErr IO) (Key BlogPost)
+    insertDb' :: BlogPost -> SqlPersistT IO (Key BlogPost)
     insertDb' = insert
 
-    deleteDb' :: Key BlogPost -> SqlPersistT (EitherT ServantErr IO) ()
+    deleteDb' :: Key BlogPost -> SqlPersistT IO ()
     deleteDb' = delete
 
-    updateDb' :: Key BlogPost -> BlogPost -> SqlPersistT (EitherT ServantErr IO) ()
+    updateDb' :: Key BlogPost -> BlogPost -> SqlPersistT IO ()
     updateDb' = replace
 
 ----------
