@@ -16,11 +16,11 @@
 module Main (main) where
 
 import Control.Exception (throwIO)
-import Control.Monad.Catch (MonadThrow, throwM)
+import Control.Monad.Catch (MonadThrow, catch, throwM)
 import Control.Monad.Error.Class (throwError)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Operational (ProgramViewT(..), view)
-import Control.Monad.Reader (ReaderT)
+import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
 import Data.ByteString (ByteString)
@@ -40,14 +40,13 @@ import Test.Hspec.Wai
 
 import Lib (BlogPost(..), DBAccess(..), DbAction(..), DbDSL, blogPostApiProxy, server)
 
--- | This is our dsl interpreter for these unit tests.  It's very similar
--- to 'Lib.runDbDSLInServant', except that it doesn't actually access
+-- | This is our 'DBAccess' instance for these unit tests.  It's very similar
+-- to the 'DBAccess' instance in "Lib", except that it doesn't actually access
 -- a database.  Instead, it just uses an 'IntMap' to simulate a database.
 
--- It's similar to 'runDbDSLInServant' in that if you curry the 'IORef'
--- argument, then you get a function @'DbDSL' a -> 'EitherT' 'ServantErr'
--- IO a@.  It takes a 'DbDSL' and evaluates it in a Servant context (e.g.
--- the @'EitherT' 'ServantErrr' IO@ monad).
+-- The 'runDb' method takes an 'IORef' to an 'IntMap' and our 'DB' monad,
+-- and evaluates it in a Servant context (e.g.  the @'EitherT'
+-- 'ServantErrr' IO@ monad).
 --
 -- It's using an 'IORef' to hold a tuple of the the 'IntMap' and 'Int'
 -- corresponding to the id count for simplicity, but it could easily be
@@ -56,91 +55,73 @@ import Lib (BlogPost(..), DBAccess(..), DbAction(..), DbDSL, blogPostApiProxy, s
 -- The 'Int' corresponding to the id count is simply the highest id of
 -- something in the database.  Everytime we insert something we increase
 -- it by 1.
-testDbDSLInServant :: IORef (IntMap BlogPost, Int)
-                   -> DbDSL a
-                   -> EitherT ServantErr IO a
-testDbDSLInServant dbRef dbDSL = do
-    case view dbDSL of
-        Return a -> return a
-        -- This evaluates a 'GetDb' request to actually get
-        -- a 'BlogPost' from the hashmap.
-        (GetDb key) :>>= nextStep -> do
-            -- Get the 'IntMap' from the 'IORef'.
-            (intMap, _) <- liftIO $ readIORef dbRef
-            -- Lookup the key of the 'BlogPost' in the 'IntMap'.
-            let maybeBlogPost = IntMap.lookup (sqlKeyToInt key) intMap
-            -- Run the next step of the dsl, passing it the 'BlogPost'.
-            testDbDSLInServant dbRef $ nextStep maybeBlogPost
-        -- Evaluate a 'InsertDb' request to insert a 'BlogPost' in to the
-        -- hashmap.
-        (InsertDb blogPost) :>>= nextStep -> do
-            (intMap, idCounter) <- liftIO $ readIORef dbRef
-            let newIntMap = IntMap.insert idCounter blogPost intMap
-                newCounter = idCounter + 1
-            liftIO $ writeIORef dbRef (newIntMap, newCounter)
-            testDbDSLInServant dbRef . nextStep $ intToSqlKey idCounter
-        -- Evaluate a 'DelDb' request to delete a 'BlogPost' from the
-        -- hashmap.
-        (DelDb key) :>>= nextStep -> do
-            (intMap, counter) <- liftIO $ readIORef dbRef
-            let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
-            liftIO $ writeIORef dbRef (newIntMap, counter)
-            testDbDSLInServant dbRef $ nextStep ()
-        -- Evaluate an 'UpdateDb' request to update a 'BlogPost' in the
-        -- hashmap.
-        (UpdateDb key blogPost) :>>= nextStep -> do
-            (intMap, counter) <- liftIO $ readIORef dbRef
-            let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
-            liftIO $ writeIORef dbRef (newIntMap, counter)
-            testDbDSLInServant dbRef $ nextStep ()
-        -- Throw an error to indicate that something went wrong.
-        (ThrowDb servantErr) :>>= _ ->
-            throwError servantErr
-  where
-    sqlKeyToInt :: Key BlogPost -> Int
-    sqlKeyToInt key = fromInteger . toInteger $ fromSqlKey key
 
-    intToSqlKey :: Int -> Key BlogPost
-    intToSqlKey int = toSqlKey . fromInteger $ toInteger int
+-- | This is just a simple newtype wrapper for our 'IORef'.
+newtype DBIORef = DBIORef { unDBIORef :: IORef (IntMap BlogPost, Int) }
 
-newtype F a = F { unF :: IORef (IntMap BlogPost, Int) -> IO a }
+-- | This is also a simple newtype wrapper for our DB Monad.  This is very
+-- similar to Persistent's 'SqlPersistT' type.
+newtype DB m a = DB { unDB :: ReaderT DBIORef m a }
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader DBIORef, MonadThrow)
 
-instance Functor F where fmap f (F aFunc) = F $ fmap f . aFunc
-instance Applicative F where
-    pure = F . const . return
-    (F aTobFunc) <*> (F aFunc) = F $ \ioref -> aTobFunc ioref <*> aFunc ioref
-instance Monad F where
-    (F aFunc) >>= (aToFb) = F $ \ioref -> aFunc ioref >>= flip unF ioref . aToFb
-instance MonadThrow F where throwM = F . const . throwIO
+instance DBAccess (DB IO) DBIORef where
 
-newtype G m a = G { unG :: ReaderT (IORef (IntMap BlogPost, Int)) m a } deriving (Functor, Applicative, Monad, MonadThrow)
+    -- | Evaluate our 'DB' moonad in a Servant context (e.g.  the
+    -- @'EitherT' 'ServantErrr' IO@ monad).
+    runDb :: DBIORef
+          -> DB IO a
+          -> EitherT ServantErr IO a
+    runDb dbIORef (DB readerT) =
+        liftIO (runReaderT readerT dbIORef)
+            `catch` \(err::ServantErr) -> throwError err
 
--- instance DBAccess (F) (IORef (IntMap BlogPost, Int)) where
+    -- | Get a 'BlogPost' from the hashmap given the key.'
+    getDb' :: Key BlogPost -> DB IO (Maybe BlogPost)
+    getDb' key = do
+        -- Get the 'IntMap' from the 'IORef'.
+        (intMap, _) <- liftIO . readIORef . unDBIORef =<< ask
+        -- Lookup the key of the 'BlogPost' in the 'IntMap' and return it.
+        return $ IntMap.lookup (sqlKeyToInt key) intMap
 
---     runDb :: IORef (IntMap BlogPost, Int)
---           -> (IORef (IntMap BlogPost, Int) -> IO a)
---           -> EitherT ServantErr IO a
---     runDb conn query =
---         -- runSqlConn query conn
---         --     `catch` \(err::ServantErr) -> throwError err
---         undefined
+    -- | Put a 'BlogPost' into the hashmap and return the 'Key'.
+    insertDb' :: BlogPost -> DB IO (Key BlogPost)
+    insertDb' blogPost = do
+        (DBIORef dbRef) <- ask
+        (intMap, idCounter) <- liftIO $ readIORef dbRef
+        let newIntMap = IntMap.insert idCounter blogPost intMap
+            newCounter = idCounter + 1
+        liftIO $ writeIORef dbRef (newIntMap, newCounter)
+        return $ intToSqlKey idCounter
 
---     getDb' :: Key BlogPost -> IO (Maybe BlogPost)
---     getDb' = undefined
+    -- | Delete a 'BlogPost' from the hashmap.
+    deleteDb' :: Key BlogPost -> DB IO ()
+    deleteDb' key = do
+        (DBIORef dbRef) <- ask
+        (intMap, counter) <- liftIO $ readIORef dbRef
+        let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
+        liftIO $ writeIORef dbRef (newIntMap, counter)
 
---     insertDb' :: BlogPost -> IO (Key BlogPost)
---     insertDb' = undefined
+    -- | Overwrite a 'BlogPost' from the hashmap with a new value.
+    updateDb' :: Key BlogPost -> BlogPost -> DB IO ()
+    updateDb' key blogPost = do
+        (DBIORef dbRef) <- ask
+        (intMap, counter) <- liftIO $ readIORef dbRef
+        let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
+        liftIO $ writeIORef dbRef (newIntMap, counter)
 
---     deleteDb' :: Key BlogPost -> IO ()
---     deleteDb' = undefined
+-- | Turn a 'Key' 'BlogPost' into an 'Int'.  This is for storing a 'Key'
+-- 'BlogPost' in our 'IntMap'.
+sqlKeyToInt :: Key BlogPost -> Int
+sqlKeyToInt key = fromInteger . toInteger $ fromSqlKey key
 
---     updateDb' :: Key BlogPost -> BlogPost -> IO ()
---     updateDb' = undefined
+-- | Opposite of 'sqlKeyToInt'.
+intToSqlKey :: Int -> Key BlogPost
+intToSqlKey int = toSqlKey . fromInteger $ toInteger int
 
 -- | This creates a Wai 'Application'.
 --
 -- It just creates a new 'IORef' to our 'IntMap', and passes it to
--- 'testDbDSLInServant'.  It then uses the 'serve' function to create a Wai
+-- 'server'.  It then uses the 'serve' function to create a Wai
 -- 'Application'.
 app :: IO Application
 app = do
@@ -148,8 +129,7 @@ app = do
     -- The 'IntMap' will be our database.  The 'Int' will be a count
     -- holding the highest id in the database.
     dbRef <- newIORef (IntMap.empty, 1)
-    -- return . serve blogPostApiProxy $ server (testDbDSLInServant dbRef)
-    undefined
+    return . serve blogPostApiProxy $ server (DBIORef dbRef)
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
