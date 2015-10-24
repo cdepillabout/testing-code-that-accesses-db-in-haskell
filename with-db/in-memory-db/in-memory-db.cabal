@@ -1,0 +1,70 @@
+name:                in-memory-db
+version:             0.1.0.0
+synopsis:            Testing a Haskell REST API based on datatypes.
+description:         Please see README.md
+homepage:            http://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell
+license:             BSD3
+license-file:        LICENSE
+author:              Dennis Gosnell
+maintainer:          cdepillabout@gmail.com
+copyright:           2015 Dennis Gosnell
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Lib
+  build-depends:       base >= 4.7 && < 5
+                     , aeson >= 0.8 && < 1
+                     , either >= 4 && < 5
+                     , exceptions >= 0.8 && < 1
+                     , lens >= 4 && < 5
+                     , monad-logger >= 0.3 && < 1
+                     , mtl >= 2 && < 3
+                     , operational >= 0.2 && < 1
+                     , persistent >= 2 && < 3
+                     , persistent-sqlite >= 2 && < 3
+                     , persistent-template >= 2 && < 3
+                     , servant >= 0.4 && < 5
+                     , servant-server >= 0.4 && < 5
+                     , text >= 1 && < 2
+                     , transformers >= 0.4 && < 1
+                     , warp >= 3 && < 4
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable in-memory-db-exe
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , in-memory-db
+  default-language:    Haskell2010
+
+test-suite in-memory-db-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Test.hs
+  build-depends:       base
+                     , aeson
+                     , bytestring >= 0.10 && < 1
+                     , containers >= 0.5 && < 1
+                     , either
+                     , exceptions
+                     , in-memory-db
+                     , hspec >= 2 && < 3
+                     , hspec-wai >= 0.6 && < 1
+                     , hspec-wai-json >= 0.6 && < 1
+                     , http-types >= 0.8 && < 1
+                     , monad-logger
+                     , mtl
+                     , operational
+                     , persistent
+                     , persistent-sqlite
+                     , servant-server
+                     , transformers
+                     , wai >= 3 && < 4
+                     , wai-extra >= 3 && < 4
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
