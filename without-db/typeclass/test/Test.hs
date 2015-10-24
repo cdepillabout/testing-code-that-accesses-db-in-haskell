@@ -1,6 +1,6 @@
 
 -- These are the tests for our api.  The only real interesting parts are
--- the 'testDbDSLInServant' and 'app' functions.
+-- the 'DBAccess' instance and 'app' functions.
 
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -42,15 +42,15 @@ import Lib (BlogPost(..), DBAccess(..), blogPostApiProxy, server)
 -- to the 'DBAccess' instance in "Lib", except that it doesn't actually access
 -- a database.  Instead, it just uses an 'IntMap' to simulate a database.
 
--- The 'runDb' method takes an 'IORef' to an 'IntMap' and our 'DB' monad,
--- and evaluates it in a Servant context (e.g.  the @'EitherT'
+-- The 'runDb' method takes an 'IORef' that references an 'IntMap' and our
+-- 'DB' monad, and evaluates it in a Servant context (e.g.  the @'EitherT'
 -- 'ServantErrr' IO@ monad).
 --
 -- It's using an 'IORef' to hold a tuple of the the 'IntMap' and 'Int'
 -- (corresponding to the id count) for simplicity, but it could easily be
 -- rewritten to use something like a 'State' monad instead of an IORef.
 --
--- The 'Int' corresponding to the id count is simply the highest id of
+-- The 'Int' (corresponding to the id count) is simply the highest id of
 -- something in the database.  Everytime we insert something we increase
 -- it by 1.
 
@@ -123,7 +123,7 @@ intToSqlKey int = toSqlKey . fromInteger $ toInteger int
 -- 'Application'.
 app :: IO Application
 app = do
-    -- Create an 'IORef' to a tuple of an 'IntMap' and 'Int'.
+    -- Create an 'IORef' that references a tuple of an 'IntMap' and 'Int'.
     -- The 'IntMap' will be our database.  The 'Int' will be a count
     -- holding the highest id in the database.
     dbRef <- newIORef (IntMap.empty, 1)
@@ -132,8 +132,8 @@ app = do
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
 --
--- This function is using 'app', which in turn uses our test dsl interpreter
--- ('testDbDSLInServant').
+-- This function is using 'app', which in turn uses our testing instance of
+-- 'DBAccess'.
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
