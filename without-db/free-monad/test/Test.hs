@@ -10,6 +10,7 @@
 
 module Main (main) where
 
+import Control.Monad (when)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Operational (ProgramViewT(..), view)
@@ -83,7 +84,8 @@ testDbDSLInServant dbRef dbDSL = do
         (UpdateDb key blogPost) :>>= nextStep -> do
             (intMap, counter) <- liftIO $ readIORef dbRef
             let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
-            liftIO $ writeIORef dbRef (newIntMap, counter)
+            when (sqlKeyToInt key `IntMap.member` intMap) $
+                liftIO $ writeIORef dbRef (newIntMap, counter)
             testDbDSLInServant dbRef $ nextStep ()
         -- Throw an error to indicate that something went wrong.
         (ThrowDb servantErr) :>>= _ ->
@@ -119,20 +121,20 @@ app = do
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
-        it "responds with 404 because nothing has been inserted" $ do
-            get "/read/1" `shouldRespondWith` 404
-
         it "responds with 200 after inserting something" $ do
             postJson "/create" testBlogPost `shouldRespondWith` 201
             get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+
+        it "responds with 404 because nothing has been inserted" $ do
+            get "/read/1" `shouldRespondWith` 404
 
     describe "PUT blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
 
-        it "can GET after PUT" $ do
+        it "can't GET after PUT" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
-            get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+            get "/read/1" `shouldRespondWith` 404
 
     describe "DELETE blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
