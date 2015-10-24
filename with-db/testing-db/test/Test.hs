@@ -1,6 +1,7 @@
 
--- These are the tests for our api.  The only real interesting parts are
--- the 'DBAccess' instance and 'app' functions.
+-- These are the tests for our api.  The only real interesting part is the
+-- 'main' function, were we specific that the test database is different
+-- from the production database.
 
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -44,8 +45,8 @@ import Lib -- (BlogPost(..), BlogPostId, blogPostApiProxy, migrateAll, server)
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
 --
--- This function is using 'app', which in turn uses our 'DBAccess'
--- datatype.
+-- This function is using 'app', which in turn accesses our testing
+-- database.
 spec :: IO Application -> Spec
 spec app = with app $ do
     describe "GET blogpost" $ do
@@ -101,12 +102,18 @@ spec app = with app $ do
     testBlogPost :: BlogPost
     testBlogPost = BlogPost "title" "content"
 
+-- | This is almost identical to the 'defaultMain' defined in "Lib", except
+-- that is it running against "testing.sqlite" instead of
+-- "production.sqlite".
 main :: IO ()
 main =
     runNoLoggingT $ withSqliteConn "testing.sqlite" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ hspec $ spec $ do
+            -- Before running each test, we have to remove all of the
+            -- existing blog posts from the database.  This ensures that
+            -- it doesn't matter which order the tests are run in.
             runSqlConn (deleteWhere [BlogPostId >=. toSqlKey 0]) conn
             return . serve blogPostApiProxy $ server conn
 

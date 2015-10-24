@@ -84,22 +84,6 @@ BlogPost json
     deriving Show
 |]
 
-runDb :: SqlBackend -> SqlPersistT IO a -> EitherT ServantErr IO a
-runDb conn query =
-    liftIO (runSqlConn query conn)
-        `catch` \(err::ServantErr) -> throwError err
-
--- | This tries to get a 'BlogPost' from our database, and throws an error
--- if it can't.
---
--- Helper functions like this can easily be written by using the 'DBAccess'
--- constraint.  The functions in 'DBAcesss' can be combined arbitrarily.
-getOr404 :: Key BlogPost -> SqlPersistT IO BlogPost
-getOr404 key = do
-    maybeVal <- get key
-    case maybeVal of
-        Just blogPost -> return blogPost
-        Nothing -> throwM err404
 
 -----------------
 -----------------
@@ -127,21 +111,15 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- Servant-specfic and not too interesting.  If you want to learn more
 -- about it, see the Servant tutorial.
 --
--- However, there are two interesting things here.  The first is the
+-- However, there is one interesting things here.  The first is the
 -- 'createBlogPost', 'readBlogPost', 'updateBlogPost', and 'deleteBlogPost'
 -- functions.  See their documentation for an explanation of what they are
 -- doing.
 
--- The second interesting thing is the 'DBAccess' arguement.  We can use
--- this to actually access the database.
---
--- In production, this 'DBAccesss' will contain functions that access an
--- SQLite database. In testing, an instance of 'DBAccess' that just uses
--- a hashmap to simulate a database will be used.
---
--- The cool thing is that this 'server' function doesn't have to change
--- between production and testing.  The only thing that will change is the
--- 'DBAccess' that is in use.
+-- In production, the 'SqlBackend' argument will contain connection
+-- information to access the production database, while in testing, the
+-- 'SqlBackend' argument will contain connection information to access
+-- a testing database.
 server :: SqlBackend -> Server BlogPostApi
 server conn = createBlogPost
          :<|> readBlogPost
@@ -154,21 +132,33 @@ server conn = createBlogPost
     -- input, and we need to return a 'Key' 'BlogPost' (which you can think
     -- of as an integer that corresponds to a database id).
     --
-    -- -- We use the 'runDb' function from the 'DBAccess', @db@.
+    -- -- We use the 'runDb' function defined below.
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
-    createBlogPost blogPost = runDb conn $ insert blogPost
+    createBlogPost blogPost = runDb $ insert blogPost
 
-    -- Similar to 'createBlogPost'.
+    -- This is the handler for the API call that fetches a blog post from
+    -- the database.  Return a 404 if the blog post can't be found.
     readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
-    readBlogPost key = runDb conn $ getOr404 key
+    readBlogPost key = runDb $ do
+        maybeVal <- get key
+        case maybeVal of
+            Just blogPost -> return blogPost
+            Nothing -> throwM err404
 
     -- Similar to 'createBlogPost'.
     updateBlogPost :: Key BlogPost -> BlogPost -> EitherT ServantErr IO ()
-    updateBlogPost key val = runDb conn $ replace key val
+    updateBlogPost key val = runDb $ replace key val
 
     -- Similar to 'createBlogPost'.
     deleteBlogPost :: Key BlogPost -> EitherT ServantErr IO ()
-    deleteBlogPost key = runDb conn $ delete key
+    deleteBlogPost key = runDb $ delete key
+
+    -- This is a small helper function for running a Persistent database
+    -- action.  This is used in the four handlers above.
+    runDb :: SqlPersistT IO a -> EitherT ServantErr IO a
+    runDb query =
+        liftIO (runSqlConn query conn)
+            `catch` \(err::ServantErr) -> throwError err
 
 -- | This is another artifact of Servant.  See the Servant tutorial or this
 -- article I wrote about Servant for an overview of what this is:
@@ -195,8 +185,7 @@ defaultMain =
     runStderrLoggingT $ withSqliteConn "production.sqlite" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 $ serve blogPostApiProxy $ server conn
-
+        liftIO . run 8080 . serve blogPostApiProxy $ server conn
 
 -----------------
 -----------------
