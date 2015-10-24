@@ -1,9 +1,10 @@
 
--- This approach is very straightforward.  We just use two separate
--- databases.  We have one database for production, called
--- "production.sqlite", and one database for testing, called
--- "testing.sqlite".  The database name is specified in the 'main'
--- function.
+-- This approach is very straightforward.  We use a normal database for
+-- production, and then for testing we just use an in memory database.
+--
+-- The code here is identical to the code for @testing-db@, so if you want
+-- to learn how the following code works, see the file
+-- @testing-db/src/Lib.hs@.
 
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
@@ -119,7 +120,7 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- In production, the 'SqlBackend' argument will contain connection
 -- information to access the production database, while in testing, the
 -- 'SqlBackend' argument will contain connection information to access
--- a testing database.
+-- an in-memory database.
 server :: SqlBackend -> Server BlogPostApi
 server conn = createBlogPost
          :<|> readBlogPost

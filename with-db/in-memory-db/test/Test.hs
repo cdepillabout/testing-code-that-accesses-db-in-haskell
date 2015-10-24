@@ -37,7 +37,7 @@ import Lib (BlogPost(..), EntityField(..), blogPostApiProxy, migrateAll, server)
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
 --
--- This function is using 'app', which in turn accesses our testing
+-- This function is using 'app', which in turn accesses our in-memory
 -- database.
 spec :: IO Application -> Spec
 spec app = with app $ do
@@ -95,8 +95,8 @@ spec app = with app $ do
     testBlogPost = BlogPost "title" "content"
 
 -- | This is almost identical to the 'defaultMain' defined in "Lib", except
--- that is it running against "testing.sqlite" instead of
--- "production.sqlite".
+-- that is it running against an in-memory database (specified as
+-- @:memory:@), instead of @production.sqlite@.
 main :: IO ()
 main =
     runNoLoggingT $ withSqliteConn ":memory:" $ \conn -> do
