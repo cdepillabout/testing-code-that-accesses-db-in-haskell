@@ -103,9 +103,6 @@ spec app = with app $ do
 
 main :: IO ()
 main =
-    -- Create an 'IORef' that references a tuple of an 'IntMap' and 'Int'.
-    -- The 'IntMap' will be our database.  The 'Int' will be a count
-    -- holding the highest id in the database.
     runNoLoggingT $ withSqliteConn "testing.sqlite" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."

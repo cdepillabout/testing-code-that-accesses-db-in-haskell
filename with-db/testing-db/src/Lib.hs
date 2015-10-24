@@ -1,10 +1,9 @@
 
--- This approach is very similar to the typeclass approach.  It directly
--- wraps the DB access functions inside a datatype.
---
--- This is so similar to the typeclass approach that I didn't comment the
--- code very well.  If you can understand the typeclass approach, this
--- datatype approach should be easily understandable.
+-- This approach is very straightforward.  We just use two separate
+-- databases.  We have one database for production, called
+-- "production.sqlite", and one database for testing, called
+-- "testing.sqlite".  The database name is specified in the 'main'
+-- function.
 
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
