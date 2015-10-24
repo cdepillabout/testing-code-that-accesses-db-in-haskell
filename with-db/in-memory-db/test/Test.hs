@@ -1,7 +1,6 @@
 
 -- These are the tests for our api.  The only real interesting part is the
--- 'main' function, were we specific that the test database is different
--- from the production database.
+-- 'main' function, where we specific that the test database is in memory.
 
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,6 +12,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main (main) where
 
@@ -32,7 +32,7 @@ import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
     , shouldRespondWith, with )
 
-import Lib -- (BlogPost(..), BlogPostId, blogPostApiProxy, migrateAll, server)
+import Lib (BlogPost(..), EntityField(..), blogPostApiProxy, migrateAll, server)
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
