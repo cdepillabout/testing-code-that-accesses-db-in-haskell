@@ -99,7 +99,7 @@ spec app = with app $ do
 -- "production.sqlite".
 main :: IO ()
 main =
-    runNoLoggingT $ withSqliteConn "testing.sqlite" $ \conn -> do
+    runNoLoggingT $ withSqliteConn ":memory:" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
         liftIO $ hspec $ spec $ do
