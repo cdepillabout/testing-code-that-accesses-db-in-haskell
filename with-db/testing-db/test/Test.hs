@@ -16,25 +16,17 @@
 
 module Main (main) where
 
-import Control.Monad.Catch (MonadThrow, catch)
-import Control.Monad.Error.Class (throwError)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Logger (NoLoggingT(..), runStderrLoggingT)
-import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
-import Control.Monad.Trans.Either (EitherT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Logger (NoLoggingT(..))
 import Data.Aeson (ToJSON, encode)
 import Data.ByteString (ByteString)
-import Data.IntMap.Lazy (IntMap)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import qualified Data.IntMap.Lazy as IntMap
-import Database.Persist ((>=.), Key, deleteWhere)
-import Database.Persist.Sql (fromSqlKey, toSqlKey)
-import Database.Persist.Sqlite
-    ( SqlPersistT, runMigration, runSqlConn, withSqliteConn )
+import Database.Persist ((>=.), deleteWhere)
+import Database.Persist.Sql (toSqlKey)
+import Database.Persist.Sqlite (runMigration, runSqlConn, withSqliteConn)
 import Network.HTTP.Types.Method (methodPost, methodPut)
 import Network.Wai (Application)
 import Network.Wai.Test (SResponse)
-import Servant.Server (ServantErr(..), serve)
+import Servant.Server (serve)
 import Test.Hspec (Spec, describe, hspec, it)
 import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
