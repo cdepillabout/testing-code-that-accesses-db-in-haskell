@@ -32,7 +32,7 @@ import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
     , shouldRespondWith, with )
 
-import Lib -- (BlogPost(..), BlogPostId, blogPostApiProxy, migrateAll, server)
+import Lib (BlogPost(..), EntityField(..), blogPostApiProxy, migrateAll, server)
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.

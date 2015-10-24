@@ -32,7 +32,7 @@
 -- understand.  Described at the end of this file.
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Lib where
+module Lib (module Lib, EntityField(..)) where
 
 import Control.Exception (Exception)
 import Control.Monad.Catch (catch, throwM)
@@ -42,7 +42,7 @@ import Control.Monad.Logger (runStderrLoggingT)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Proxy (Proxy(..))
 import Database.Persist
-    ( Key, ToBackendKey, delete, get, insert, replace )
+    ( Key, EntityField, ToBackendKey, delete, get, insert, replace )
 import Database.Persist.Sqlite
     ( SqlBackend, SqlPersistT, runMigration, runSqlConn, toSqlKey
     , withSqliteConn )
