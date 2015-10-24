@@ -1,14 +1,10 @@
 
--- This approach uses a free-monad to make a DSL to describe database
--- access.  Two separate interpreters for the DSL are created.  One
--- interpreter is used in production and one interpreter is used for tests.
--- The interpreter used in production actually interacts with the database
--- (e.g. putting data into the database and getting data out of the
--- database).  The interpreter used for tests simulates a database using a
--- hashmap.
+-- This approach uses a typeclass to describe database access.  Two
+-- separate instances are created, one for production that actually
+-- accesses a database, and one for testing that simulates a database with
+-- a simple hashmap.
 --
--- This is heavily inspired by
--- https://hbtvl.wordpress.com/2015/06/28/servant-persistent-and-dsls.
+-- This approach is similar to how Persistent works.
 
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
@@ -119,7 +115,7 @@ BlogPost json
 -- Later on in this file, we will define an instance of 'DBAccess' that
 -- will allow us to access a Persistent database.  Then, in testing, we
 -- will define a different instance of 'DBAccess' that allows us to access
--- an in-memory database modeled as a simple Hashmap.
+-- a fake database modeled as a simple Hashmap.
 --
 -- (PROTIP1: Check out the argument to 'getDb': 'Key'.  'Key' is defined in
 -- Persistent.  Ideally, this dsl would have no dependency on Persistent at
@@ -183,23 +179,18 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- functions.  See their documentation for an explanation of what they are
 -- doing.
 
--- The second interesting thing is the @d@ arguement.  The
--- 'interpreter' is a function that takes a 'DbDSL' and runs it in
--- a Servant context (that is, inside a @'EitherT' 'ServantErr' IO@ monad).
+-- The second interesting thing is the 'DBAccess' constraint.  This
+-- constraint tells us that by using the @d@ argument, we will be able to
+-- access a database as long as there is an instance of 'DBAccess' in the
+-- environment.
 --
--- The second interesting thing is the @d@ arguement.  The
--- 'interpreter' is a function that takes a 'DbDSL' and runs it in
--- a Servant context (that is, inside a @'EitherT' 'ServantErr' IO@ monad).
---
--- This is what is actually evaluating the dsl.  In production the
--- 'interpreter' will actually access the database.  It will put new
--- 'BlogPost's in the database and read existing 'BlogPost's from the
--- database.  In testing, the 'interpreter' will just use a Hashmap in
--- memory to simulate database access.
+-- In production, an instance of 'DBAccess' that actually accesses an
+-- SQLite database will be used. In testing, an instance of 'DBAccess' that
+-- just uses a hashmap to simulate a database will be used.
 --
 -- The cool thing is that this 'server' function doesn't have to change
 -- between production and testing.  The only thing that will change is the
--- 'interpreter' function.
+-- 'DBAccess' that is in use.
 server :: DBAccess m d => d -> Server BlogPostApi
 server conn = createBlogPost
          :<|> readBlogPost
@@ -212,10 +203,7 @@ server conn = createBlogPost
     -- input, and we need to return a 'Key' 'BlogPost' (which you can think
     -- of as an integer that corresponds to a database id).
     --
-    -- We use 'interpreter' and pass it the dsl @'insertDb' blogPost@.
-    -- This dsl corresponds to inserting a 'BlogPost'.  The 'interpreter'
-    -- will execute this dsl in the Servant context (@'EitherT'
-    -- 'ServantErr' IO@).
+    -- -- We use 'runDb' and @conn@ from the 'DBAccess' constaint.
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
     createBlogPost blogPost = runDb conn $ insertDb blogPost
 
