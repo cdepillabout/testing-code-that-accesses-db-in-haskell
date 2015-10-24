@@ -18,6 +18,7 @@ module Main (main) where
 import Control.Monad.Catch (MonadThrow, catch)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Logger (NoLoggingT(..), runStderrLoggingT)
 import Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Either (EitherT)
 import Data.Aeson (ToJSON, encode)
@@ -25,8 +26,10 @@ import Data.ByteString (ByteString)
 import Data.IntMap.Lazy (IntMap)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Lazy as IntMap
-import Database.Persist (Key)
+import Database.Persist ((>=.), Key, deleteWhere)
 import Database.Persist.Sql (fromSqlKey, toSqlKey)
+import Database.Persist.Sqlite
+    ( SqlPersistT, runMigration, runSqlConn, withSqliteConn )
 import Network.HTTP.Types.Method (methodPost, methodPut)
 import Network.Wai (Application)
 import Network.Wai.Test (SResponse)
@@ -36,101 +39,30 @@ import Test.Hspec.Wai
     ( WaiExpectation, WaiSession, delete, get, matchBody, request
     , shouldRespondWith, with )
 
-import Lib (BlogPost(..), DBAccess(..), blogPostApiProxy, server)
-
--- | This is very similar to the instance for the 'DBAccess' typeclass in the "typeclass"
--- example test code.  Look there for an explanation.
-
-newtype DBIORef = DBIORef { unDBIORef :: IORef (IntMap BlogPost, Int) }
-
-newtype DB m a = DB (ReaderT DBIORef m a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader DBIORef, MonadThrow)
-
-testDB :: DBIORef -> DBAccess (DB IO)
-testDB config = DBAccess { runDb = runDb' config
-                         , getDb = getDb'
-                         , insertDb = insertDb'
-                         , deleteDb = deleteDb'
-                         , updateDb = updateDb'
-                         }
-  where
-    runDb' :: DBIORef -> DB IO a -> EitherT ServantErr IO a
-    runDb' dbIORef (DB readerT) =
-        liftIO (runReaderT readerT dbIORef)
-            `catch` \(err::ServantErr) -> throwError err
-
-    getDb' :: Key BlogPost -> DB IO (Maybe BlogPost)
-    getDb' key = do
-        (intMap, _) <- liftIO . readIORef . unDBIORef =<< ask
-        return $ IntMap.lookup (sqlKeyToInt key) intMap
-
-    insertDb' :: BlogPost -> DB IO (Key BlogPost)
-    insertDb' blogPost = do
-        (DBIORef dbRef) <- ask
-        (intMap, idCounter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.insert idCounter blogPost intMap
-            newCounter = idCounter + 1
-        liftIO $ writeIORef dbRef (newIntMap, newCounter)
-        return $ intToSqlKey idCounter
-
-    deleteDb' :: Key BlogPost -> DB IO ()
-    deleteDb' key = do
-        (DBIORef dbRef) <- ask
-        (intMap, counter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
-        liftIO $ writeIORef dbRef (newIntMap, counter)
-
-    updateDb' :: Key BlogPost -> BlogPost -> DB IO ()
-    updateDb' key blogPost = do
-        (DBIORef dbRef) <- ask
-        (intMap, counter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
-        liftIO $ writeIORef dbRef (newIntMap, counter)
-
--- | Turn a 'Key' 'BlogPost' into an 'Int'.  This is for storing a 'Key'
--- 'BlogPost' in our 'IntMap'.
-sqlKeyToInt :: Key BlogPost -> Int
-sqlKeyToInt key = fromInteger . toInteger $ fromSqlKey key
-
--- | Opposite of 'sqlKeyToInt'.
-intToSqlKey :: Int -> Key BlogPost
-intToSqlKey int = toSqlKey . fromInteger $ toInteger int
-
--- | This creates a Wai 'Application'.
---
--- It just creates a new 'IORef' to our 'IntMap', and passes it to
--- 'server'.  It then uses the 'serve' function to create a Wai
--- 'Application'.
-app :: IO Application
-app = do
-    -- Create an 'IORef' that references a tuple of an 'IntMap' and 'Int'.
-    -- The 'IntMap' will be our database.  The 'Int' will be a count
-    -- holding the highest id in the database.
-    dbRef <- newIORef (IntMap.empty, 1)
-    return . serve blogPostApiProxy . server . testDB $ DBIORef dbRef
+import Lib -- (BlogPost(..), BlogPostId, blogPostApiProxy, migrateAll, server)
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
 --
 -- This function is using 'app', which in turn uses our 'DBAccess'
 -- datatype.
-spec :: Spec
-spec = with app $ do
+spec :: IO Application -> Spec
+spec app = with app $ do
     describe "GET blogpost" $ do
-        it "responds with 404 because nothing has been inserted" $ do
-            get "/read/1" `shouldRespondWith` 404
 
         it "responds with 200 after inserting something" $ do
             postJson "/create" testBlogPost `shouldRespondWith` 201
             get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+        it "responds with 404 because nothing has been inserted" $ do
+            get "/read/1" `shouldRespondWith` 404
 
     describe "PUT blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
 
-        it "can GET after PUT" $ do
+        it "can't GET after PUT" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
-            get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+            get "/read/1" `shouldRespondWith` 404
 
     describe "DELETE blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
@@ -170,5 +102,14 @@ spec = with app $ do
     testBlogPost = BlogPost "title" "content"
 
 main :: IO ()
-main = hspec spec
+main =
+    -- Create an 'IORef' that references a tuple of an 'IntMap' and 'Int'.
+    -- The 'IntMap' will be our database.  The 'Int' will be a count
+    -- holding the highest id in the database.
+    runNoLoggingT $ withSqliteConn "testing.sqlite" $ \conn -> do
+        liftIO $ runSqlConn (runMigration migrateAll) conn
+        liftIO $ putStrLn "\napi running on port 8080..."
+        liftIO $ hspec $ spec $ do
+            runSqlConn (deleteWhere [BlogPostId >=. toSqlKey 0]) conn
+            return . serve blogPostApiProxy $ server conn
 

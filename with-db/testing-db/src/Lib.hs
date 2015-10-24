@@ -36,7 +36,7 @@
 module Lib where
 
 import Control.Exception (Exception)
-import Control.Monad.Catch (MonadThrow, catch, throwM)
+import Control.Monad.Catch (catch, throwM)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runStderrLoggingT)
@@ -85,27 +85,19 @@ BlogPost json
     deriving Show
 |]
 
----------------------------------------
----------------------------------------
--- Datatype for accessing a database --
----------------------------------------
----------------------------------------
-
-data DBAccess m = DBAccess { runDb :: forall a . m a -> EitherT ServantErr IO a
-                           , getDb :: Key BlogPost -> m (Maybe BlogPost)
-                           , insertDb :: BlogPost -> m (Key BlogPost)
-                           , deleteDb :: Key BlogPost -> m ()
-                           , updateDb :: Key BlogPost -> BlogPost -> m ()
-                           }
+runDb :: SqlBackend -> SqlPersistT IO a -> EitherT ServantErr IO a
+runDb conn query =
+    liftIO (runSqlConn query conn)
+        `catch` \(err::ServantErr) -> throwError err
 
 -- | This tries to get a 'BlogPost' from our database, and throws an error
 -- if it can't.
 --
--- Helper functions like this can easily be written by passing in
--- a 'DBAccess' datatype.
-getOr404Db :: MonadThrow m => DBAccess m -> Key BlogPost -> m BlogPost
-getOr404Db db key = do
-    maybeVal <- getDb db key
+-- Helper functions like this can easily be written by using the 'DBAccess'
+-- constraint.  The functions in 'DBAcesss' can be combined arbitrarily.
+getOr404 :: Key BlogPost -> SqlPersistT IO BlogPost
+getOr404 key = do
+    maybeVal <- get key
     case maybeVal of
         Just blogPost -> return blogPost
         Nothing -> throwM err404
@@ -151,8 +143,8 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- The cool thing is that this 'server' function doesn't have to change
 -- between production and testing.  The only thing that will change is the
 -- 'DBAccess' that is in use.
-server :: MonadThrow m => DBAccess m -> Server BlogPostApi
-server db = createBlogPost
+server :: SqlBackend -> Server BlogPostApi
+server conn = createBlogPost
          :<|> readBlogPost
          :<|> updateBlogPost
          :<|> deleteBlogPost
@@ -165,61 +157,25 @@ server db = createBlogPost
     --
     -- -- We use the 'runDb' function from the 'DBAccess', @db@.
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
-    createBlogPost blogPost = runDb db $ insertDb db blogPost
+    createBlogPost blogPost = runDb conn $ insert blogPost
 
     -- Similar to 'createBlogPost'.
     readBlogPost :: Key BlogPost -> EitherT ServantErr IO BlogPost
-    readBlogPost key = runDb db $ getOr404Db db key
+    readBlogPost key = runDb conn $ getOr404 key
 
     -- Similar to 'createBlogPost'.
     updateBlogPost :: Key BlogPost -> BlogPost -> EitherT ServantErr IO ()
-    updateBlogPost key val = runDb db $ updateDb db key val
+    updateBlogPost key val = runDb conn $ replace key val
 
     -- Similar to 'createBlogPost'.
     deleteBlogPost :: Key BlogPost -> EitherT ServantErr IO ()
-    deleteBlogPost key = runDb db $ deleteDb db key
+    deleteBlogPost key = runDb conn $ delete key
 
 -- | This is another artifact of Servant.  See the Servant tutorial or this
 -- article I wrote about Servant for an overview of what this is:
 -- <http://functor.tokyo/blog/2015-08-13-servant-type-families>
 blogPostApiProxy :: Proxy BlogPostApi
 blogPostApiProxy = Proxy
-
------------------------
------------------------
--- database instance --
------------------------
------------------------
-
--- | This function will produce a 'DBAccess' when passed an 'SqlBackend'.
---
--- This is very similar how the 'DBAccess' instance works in the typeclass
--- example, so you might want to look there for additional comments.
-prodDB :: SqlBackend -> DBAccess (SqlPersistT IO)
-prodDB config = DBAccess { runDb = runDb' config
-                   , getDb = getDb'
-                   , insertDb = insertDb'
-                   , deleteDb = deleteDb'
-                   , updateDb = updateDb'
-                   }
-  where
-    runDb' :: SqlBackend -> SqlPersistT IO a -> EitherT ServantErr IO a
-    runDb' conn query =
-        liftIO (runSqlConn query conn)
-            `catch` \(err::ServantErr) -> throwError err
-
-    getDb' :: Key BlogPost -> SqlPersistT IO (Maybe BlogPost)
-    getDb' = get
-
-    insertDb' :: BlogPost -> SqlPersistT IO (Key BlogPost)
-    insertDb' = insert
-
-    deleteDb' :: Key BlogPost -> SqlPersistT IO ()
-    deleteDb' = delete
-
-    updateDb' :: Key BlogPost -> BlogPost -> SqlPersistT IO ()
-    updateDb' = replace
-
 
 ----------
 ----------
@@ -240,7 +196,7 @@ defaultMain =
     runStderrLoggingT $ withSqliteConn "production.sqlite" $ \conn -> do
         liftIO $ runSqlConn (runMigration migrateAll) conn
         liftIO $ putStrLn "\napi running on port 8080..."
-        liftIO $ run 8080 $ serve blogPostApiProxy $ server $ prodDB conn
+        liftIO $ run 8080 $ serve blogPostApiProxy $ server conn
 
 
 -----------------

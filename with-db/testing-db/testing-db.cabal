@@ -34,7 +34,7 @@ library
   default-language:    Haskell2010
   ghc-options:         -Wall
 
-executable datatype-exe
+executable testing-db-exe
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
@@ -42,7 +42,7 @@ executable datatype-exe
                      , testing-db
   default-language:    Haskell2010
 
-test-suite datatype-test
+test-suite testing-db-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Test.hs
@@ -57,9 +57,11 @@ test-suite datatype-test
                      , hspec-wai >= 0.6 && < 1
                      , hspec-wai-json >= 0.6 && < 1
                      , http-types >= 0.8 && < 1
+                     , monad-logger
                      , mtl
                      , operational
                      , persistent
+                     , persistent-sqlite
                      , servant-server
                      , transformers
                      , wai >= 3 && < 4
