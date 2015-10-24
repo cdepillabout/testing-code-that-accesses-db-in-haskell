@@ -1,10 +1,10 @@
 
--- This approach uses a typeclass to describe database access.  Two
--- separate instances are created, one for production that actually
--- accesses a database, and one for testing that simulates a database with
--- a simple hashmap.
+-- This approach is very similar to the typeclass approach.  It directly
+-- wraps the DB access functions inside a datatype.
 --
--- This approach is similar to how Persistent works.
+-- This is so similar to the typeclass approach that I didn't comment the
+-- code very well.  If you can understand the typeclass approach, this
+-- datatype approach should be easily understandable.
 
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
@@ -85,45 +85,12 @@ BlogPost json
     deriving Show
 |]
 
-----------------------------------------
-----------------------------------------
--- Typeclass for accessing a database --
-----------------------------------------
-----------------------------------------
+---------------------------------------
+---------------------------------------
+-- Datatype for accessing a database --
+---------------------------------------
+---------------------------------------
 
--- | The whole point of this "typeclass" example is the next couple of
--- lines.  We are defining a typeclass that represents actions that can be
--- performed on a database.
---
--- 'DBAccess' is our typeclass.  It represents types can be used to access
--- a DB (whether on disk, in memory, etc).  It takes two parameters, @m@
--- and @d@.
---
--- @m@ is the monad that we will be running in.  If you're doing something
--- like accessing a database, this might be 'IO'.  If you're using
--- Persistent it might be something like 'SqlPersistT' 'IO'.
---
--- @d@ is some data that needs to be passed in to actually run the database
--- requests.  If we are using persistent, it will probably be 'SqlBackend'.
---
--- 'getDb' is a function that lets us get a specific 'BlogPost' from the
--- database.  It is running in our @m@  monad.  The other functions are
--- similar.
---
--- 'runDb' actually lets us run our @m@ in a Servant context.
---
--- Later on in this file, we will define an instance of 'DBAccess' that
--- will allow us to access a Persistent database.  Then, in testing, we
--- will define a different instance of 'DBAccess' that allows us to access
--- a fake database modeled as a simple Hashmap.
---
--- (PROTIP1: Check out the argument to 'getDb': 'Key'.  'Key' is defined in
--- Persistent.  Ideally, this dsl would have no dependency on Persistent at
--- all.  I made the decision to have this dsl be dependent on Persistent in
--- order to simply the code and make it easier to understand.)
-
--- (PROTIP2: Modeling database access as a typeclass is very similar to how
--- Persistent itself works.)
 data DBAccess m = DBAccess { runDb :: forall a . m a -> EitherT ServantErr IO a
                            , getDb :: Key BlogPost -> m (Maybe BlogPost)
                            , insertDb :: BlogPost -> m (Key BlogPost)
@@ -134,8 +101,8 @@ data DBAccess m = DBAccess { runDb :: forall a . m a -> EitherT ServantErr IO a
 -- | This tries to get a 'BlogPost' from our database, and throws an error
 -- if it can't.
 --
--- Helper functions like this can easily be written by using the 'DBAccess'
--- constraint.  The functions in 'DBAcesss' can be combined arbitrarily.
+-- Helper functions like this can easily be written by passing in
+-- a 'DBAccess' datatype.
 getOr404Db :: MonadThrow m => DBAccess m -> Key BlogPost -> m BlogPost
 getOr404Db db key = do
     maybeVal <- getDb db key
@@ -174,14 +141,12 @@ type BlogPostApi = "create" :> ReqBody '[JSON] BlogPost
 -- functions.  See their documentation for an explanation of what they are
 -- doing.
 
--- The second interesting thing is the 'DBAccess' constraint.  This
--- constraint tells us that by using the @d@ argument, we will be able to
--- access a database as long as there is an instance of 'DBAccess' in the
--- environment.
+-- The second interesting thing is the 'DBAccess' arguement.  We can use
+-- this to actually access the database.
 --
--- In production, an instance of 'DBAccess' that actually accesses an
--- SQLite database will be used. In testing, an instance of 'DBAccess' that
--- just uses a hashmap to simulate a database will be used.
+-- In production, this 'DBAccesss' will contain functions that access an
+-- SQLite database. In testing, an instance of 'DBAccess' that just uses
+-- a hashmap to simulate a database will be used.
 --
 -- The cool thing is that this 'server' function doesn't have to change
 -- between production and testing.  The only thing that will change is the
@@ -198,7 +163,7 @@ server db = createBlogPost
     -- input, and we need to return a 'Key' 'BlogPost' (which you can think
     -- of as an integer that corresponds to a database id).
     --
-    -- -- We use 'runDb' and @conn@ from the 'DBAccess' constaint.
+    -- -- We use the 'runDb' function from the 'DBAccess', @db@.
     createBlogPost :: BlogPost -> EitherT ServantErr IO (Key BlogPost)
     createBlogPost blogPost = runDb db $ insertDb db blogPost
 
@@ -220,14 +185,16 @@ server db = createBlogPost
 blogPostApiProxy :: Proxy BlogPostApi
 blogPostApiProxy = Proxy
 
-------------------------------
-------------------------------
--- database typeclass instance --
-------------------------------
-------------------------------
+-----------------------
+-----------------------
+-- database instance --
+-----------------------
+-----------------------
 
--- | Here is our instance of 'DBAccess' for accessing the database in
--- production.  It pretty much just directly wraps the calls to Persistent.
+-- | This function will produce a 'DBAccess' when passed an 'SqlBackend'.
+--
+-- This is very similar how the 'DBAccess' instance works in the typeclass
+-- example, so you might want to look there for additional comments.
 prodDB :: SqlBackend -> DBAccess (SqlPersistT IO)
 prodDB config = DBAccess { runDb = runDb' config
                    , getDb = getDb'

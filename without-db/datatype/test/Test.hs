@@ -38,32 +38,14 @@ import Test.Hspec.Wai
 
 import Lib (BlogPost(..), DBAccess(..), blogPostApiProxy, server)
 
--- | This is our 'DBAccess' instance for these unit tests.  It's very similar
--- to the 'DBAccess' instance in "Lib", except that it doesn't actually access
--- a database.  Instead, it just uses an 'IntMap' to simulate a database.
+-- | This is very similar to the instance for the 'DBAccess' typeclass in the "typeclass"
+-- example test code.  Look there for an explanation.
 
--- The 'runDb' method takes an 'IORef' that references an 'IntMap' and our
--- 'DB' monad, and evaluates it in a Servant context (e.g.  the @'EitherT'
--- 'ServantErrr' IO@ monad).
---
--- It's using an 'IORef' to hold a tuple of the the 'IntMap' and 'Int'
--- (corresponding to the id count) for simplicity, but it could easily be
--- rewritten to use something like a 'State' monad instead of an IORef.
---
--- The 'Int' (corresponding to the id count) is simply the highest id of
--- something in the database.  Everytime we insert something we increase
--- it by 1.
-
--- | This is just a simple newtype wrapper for our 'IORef'.
 newtype DBIORef = DBIORef { unDBIORef :: IORef (IntMap BlogPost, Int) }
 
--- | This is also a simple newtype wrapper for our DB Monad.  This is very
--- similar to Persistent's 'SqlPersistT' type.
 newtype DB m a = DB (ReaderT DBIORef m a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader DBIORef, MonadThrow)
 
--- | Here is our instance of 'DBAccess' for accessing the database in
--- production.  It pretty much just directly wraps the calls to Persistent.
 testDB :: DBIORef -> DBAccess (DB IO)
 testDB config = DBAccess { runDb = runDb' config
                          , getDb = getDb'
@@ -72,8 +54,6 @@ testDB config = DBAccess { runDb = runDb' config
                          , updateDb = updateDb'
                          }
   where
-    -- | Evaluate our 'DB' moonad in a Servant context (e.g.  the
-    -- @'EitherT' 'ServantErrr' IO@ monad).
     runDb' :: DBIORef -> DB IO a -> EitherT ServantErr IO a
     runDb' dbIORef (DB readerT) =
         liftIO (runReaderT readerT dbIORef)
@@ -81,12 +61,9 @@ testDB config = DBAccess { runDb = runDb' config
 
     getDb' :: Key BlogPost -> DB IO (Maybe BlogPost)
     getDb' key = do
-        -- Get the 'IntMap' from the 'IORef'.
         (intMap, _) <- liftIO . readIORef . unDBIORef =<< ask
-        -- Lookup the key of the 'BlogPost' in the 'IntMap' and return it.
         return $ IntMap.lookup (sqlKeyToInt key) intMap
 
-    -- | Put a 'BlogPost' into the hashmap and return the 'Key'.
     insertDb' :: BlogPost -> DB IO (Key BlogPost)
     insertDb' blogPost = do
         (DBIORef dbRef) <- ask
@@ -96,7 +73,6 @@ testDB config = DBAccess { runDb = runDb' config
         liftIO $ writeIORef dbRef (newIntMap, newCounter)
         return $ intToSqlKey idCounter
 
-    -- | Delete a 'BlogPost' from the hashmap.
     deleteDb' :: Key BlogPost -> DB IO ()
     deleteDb' key = do
         (DBIORef dbRef) <- ask
@@ -104,7 +80,6 @@ testDB config = DBAccess { runDb = runDb' config
         let newIntMap = IntMap.delete (sqlKeyToInt key) intMap
         liftIO $ writeIORef dbRef (newIntMap, counter)
 
-    -- | Overwrite a 'BlogPost' from the hashmap with a new value.
     updateDb' :: Key BlogPost -> BlogPost -> DB IO ()
     updateDb' key blogPost = do
         (DBIORef dbRef) <- ask
@@ -132,13 +107,13 @@ app = do
     -- The 'IntMap' will be our database.  The 'Int' will be a count
     -- holding the highest id in the database.
     dbRef <- newIORef (IntMap.empty, 1)
-    return . serve blogPostApiProxy . server $ testDB $ DBIORef dbRef
+    return . serve blogPostApiProxy . server . testDB $ DBIORef dbRef
 
 -- | These are our actual unit tests.  They should be relatively
 -- straightforward.
 --
--- This function is using 'app', which in turn uses our testing instance of
--- 'DBAccess'.
+-- This function is using 'app', which in turn uses our 'DBAccess'
+-- datatype.
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
