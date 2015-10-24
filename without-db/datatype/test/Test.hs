@@ -15,6 +15,7 @@
 
 module Main (main) where
 
+import Control.Monad (when)
 import Control.Monad.Catch (MonadThrow, catch)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -84,8 +85,9 @@ testDB config = DBAccess { runDb = runDb' config
     updateDb' key blogPost = do
         (DBIORef dbRef) <- ask
         (intMap, counter) <- liftIO $ readIORef dbRef
-        let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
-        liftIO $ writeIORef dbRef (newIntMap, counter)
+        when (sqlKeyToInt key `IntMap.member` intMap) $ do
+                let newIntMap = IntMap.insert (sqlKeyToInt key) blogPost intMap
+                liftIO $ writeIORef dbRef (newIntMap, counter)
 
 -- | Turn a 'Key' 'BlogPost' into an 'Int'.  This is for storing a 'Key'
 -- 'BlogPost' in our 'IntMap'.
@@ -117,20 +119,20 @@ app = do
 spec :: Spec
 spec = with app $ do
     describe "GET blogpost" $ do
-        it "responds with 404 because nothing has been inserted" $ do
-            get "/read/1" `shouldRespondWith` 404
-
         it "responds with 200 after inserting something" $ do
             postJson "/create" testBlogPost `shouldRespondWith` 201
             get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+
+        it "responds with 404 because nothing has been inserted" $ do
+            get "/read/1" `shouldRespondWith` 404
 
     describe "PUT blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
 
-        it "can GET after PUT" $ do
+        it "can't GET after PUT" $ do
             putJson "/update/1" testBlogPost `shouldRespondWith` 204
-            get "/read/1" `shouldRespondWithJson` (200, testBlogPost)
+            get "/read/1" `shouldRespondWith` 404
 
     describe "DELETE blogpost" $ do
         it "responds with 204 even when key doesn't exist in DB" $ do
