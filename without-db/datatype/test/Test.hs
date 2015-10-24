@@ -1,6 +1,6 @@
 
 -- These are the tests for our api.  The only real interesting parts are
--- the 'DBAccess' instance and 'app' functions.
+-- the 'testDB' function for creating our 'DBAccess' type, and the 'app' function.
 
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
