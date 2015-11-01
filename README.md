@@ -1,38 +1,52 @@
 
 # 5 Ways to Test Application Code that Accesses a Database in Haskell
 
-This repository contains 5 separate Haskell project.  Each project demonstrates
-a different way of testing application code that accesses a database.
+This repository contains 5 separate Haskell projects.  Each project
+demonstrates a different way of testing application code that accesses a
+database.
 
 These five Haskell projects were created for the blog post here (TODO: put in
 link to blogpost), which explains the pros and cons of each approach.  Please
 see the blog post for more information.  Please see below for more information
 about the application in question.
 
-The five projects are separated into two groups.  Three of the projects are in
-the [`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory, and the other two projects are in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
+The five projects are separated into two groups.  Two of the projects are in
+the
+[`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
+directory, and the other three projects are in the
+[`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db)
 directory.
 
-The three projects in the [`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory do not use a database in the
-tests.  The two projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory do access a database in
-the tests.
+The two projects in the
+[`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
+directory access a database in the tests.  The three projects in the
+[`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db)
+directory do not access a database in the tests.
+
+## [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory
+
+There are two projects in the
+[`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db)
+directory.  These two projects connect to an actual database even in the tests.
+
+- [`with-db/test-database/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db/test-database)
+    - This approach uses two separate databases.  There is a production
+      database and a test database.  When unit tests are run, they are only
+      accessing the test database.  When code is run in production, it is only
+      accessing the production database.
+- [`with-db/in-memory-database/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db/in-memory-database)
+    - This approach is similar to the previous one, except an in-memory
+      database is used for the test database.
 
 ## [`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory
 
-There are three projects in the [`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db) directory.  These three projects
-do not connect to an actual database in the tests.  This has the benefit of
-making the tests not dependent on a database.
+There are three projects in the
+[`without-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db)
+directory.  These three projects do not connect to an actual database in the
+tests.  This has the benefit of making the tests not dependent on a database.
 
 The three projects are as follows:
 
-- [`without-db/free-monad/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db/free-monad)
-    - This approach uses a free-monad to make a DSL to describe database
-      access.  Two separate interpreters for the DSL are created.  One
-      interpreter is used in production and one interpreter is used for tests.
-      The interpreter used in production actually interacts with the database
-      (e.g. putting data into the database and getting data out of the
-      database).  The interpreter used for tests simulates a database using a
-      hashmap.
 - [`without-db/typeclass/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db/typeclass)
     - This approach abstracts out database access using a typeclass.  In
       production, there is an instance of the typeclass that accesses the
@@ -44,20 +58,14 @@ The three projects are as follows:
       database.  In production the datatype is filled in with methods that
       access a database, while in tests the datatype is filled in with methods
       that simulate accessing a database by using a hashmap.
-
-## [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory
-
-There are two projects in the [`with-db/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db) directory.  These two projects connect
-to an actual database even in the tests.
-
-- [`with-db/test-database/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db/test-database)
-    - This approach uses two separate databases.  There is a production
-      database and a test database.  When unit tests are run, they are only
-      accessing the test database.  When code is run in production, it is only
-      accessing the production database.
-- [`with-db/in-memory-database/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/with-db/in-memory-database)
-    - Thie approach is similar to the previous one, except an in-memory
-      database is used for the test database.
+- [`without-db/free-monad/`](https://github.com/cdepillabout/testing-code-that-accesses-db-in-haskell/tree/master/without-db/free-monad)
+    - This approach uses a free-monad to make a DSL to describe database
+      access.  Two separate interpreters for the DSL are created.  One
+      interpreter is used in production and one interpreter is used for tests.
+      The interpreter used in production actually interacts with the database
+      (e.g. putting data into the database and getting data out of the
+      database).  The interpreter used for tests simulates a database using a
+      hashmap.
 
 ## Explanation of the Application
 
@@ -92,7 +100,7 @@ operations on blog posts.
     - BODY: blog post JSON
         - EXAMPLE: `{"title": "updated title", "content": "updated content"}`
     - RETURNS: nothing
-- Update
+- Delete
     - This lets you delete an existing blog post.
     - METHOD: DELETE
     - URL: http://localhost:8080/delete/<id>
@@ -116,18 +124,18 @@ $ cd without-db/free-monad/
 $ stack build
 ```
 
+#### Run Unit Tests
+
+```bash
+$ stack test
+```
+
 #### Run the API
 
 ```bash
 $ stack exec free-monad-exe
 
 api running on port 8080...
-```
-
-#### Run Unit Tests
-
-```bash
-$ stack test
 ```
 
 #### Test the API from the Command Line
