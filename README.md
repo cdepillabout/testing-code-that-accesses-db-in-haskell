@@ -5,10 +5,11 @@ This repository contains 5 separate Haskell projects.  Each project
 demonstrates a different way of testing application code that accesses a
 database.
 
-These five Haskell projects were created for the blog post here (TODO: put in
-link to blogpost), which explains the pros and cons of each approach.  Please
-see the blog post for more information.  Please see below for more information
-about the application in question.
+These five Haskell projects were created for the [blog post
+here](http://functor.tokyo/blog/2015-11-20-testing-db-access), which explains
+the pros and cons of each approach.  Please see the blog post for more
+information.  Please see below for more information about the application in
+question.
 
 The five projects are separated into two groups.  Two of the projects are in
 the
